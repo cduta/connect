@@ -1,0 +1,11 @@
+appenders:
+  file:
+    kind: file
+    path: log/current.log
+    append: false
+    encoder:
+      pattern: "{d(%Y-%m-%d %H:%M:%S)} # {l} :: {m}{n}"
+root:
+  level: trace
+  appenders:
+    - file

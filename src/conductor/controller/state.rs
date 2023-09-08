@@ -403,8 +403,11 @@ impl State {
     Ok(())
   }
 
+  #[inline]
+  fn get_save_file_path(&self) -> String { format!("{}.sav", self.level_path.clone().map_or(SAVE_FILE_PATH.to_string(), |s| s.replace(".lvl", ""))) }
+
   fn save(&self) -> error::IOResult {
-    let save_file_path = format!("{}.sav", self.level_path.clone().unwrap_or(SAVE_FILE_PATH.to_string()));
+    let save_file_path = self.get_save_file_path();
     if Path::new(TEMP_SAVE_PATH).exists() {
       fs::remove_dir_all(TEMP_SAVE_PATH)?;
     }
@@ -432,7 +435,7 @@ impl State {
   }
 
   fn load(&mut self) -> error::IOResult {
-    let save_file_path = format!("{}.sav", self.level_path.clone().unwrap_or(SAVE_FILE_PATH.to_string()));
+    let save_file_path = self.get_save_file_path();
     if let Err(e) = zip_extract::extract(fs::File::open(Path::new(&save_file_path))?, Path::new("."), false) {
       log::error!("Load {} failed: {}", &save_file_path, e);
     } else {

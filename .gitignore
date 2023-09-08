@@ -2,6 +2,6 @@
 /log
 /temp-save
 /bin
-/*.sav
+*.sav
 /connect
 /crossplatform

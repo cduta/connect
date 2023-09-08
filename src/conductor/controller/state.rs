@@ -17,7 +17,7 @@ const INITIAL_BOARD_SIZE_W : u16   = u16::MAX;
 const INITIAL_BOARD_SIZE_H : u16   = u16::MAX;
 const UNDO_SIZE_IN_TURNS   : usize = 100;
 const TEMP_SAVE_PATH       : &str  = "temp-save";
-const SAVE_FILE_PATH       : &str  = "connect.sav";
+const SAVE_FILE_PATH       : &str  = "connect";
 
 #[derive(PartialEq, Eq)]
 pub enum Direction { Up, UpRight, Right, DownRight, Down, DownLeft, Left, UpLeft }
@@ -404,6 +404,7 @@ impl State {
   }
 
   fn save(&self) -> error::IOResult {
+    let save_file_path = format!("{}.sav", self.level_path.clone().unwrap_or(SAVE_FILE_PATH.to_string()));
     if Path::new(TEMP_SAVE_PATH).exists() {
       fs::remove_dir_all(TEMP_SAVE_PATH)?;
     }
@@ -416,12 +417,12 @@ impl State {
     if let Err(e) = archiver.archive() {
       log::error!("Save failed: {}", e);
     } else {
-      if Path::new(SAVE_FILE_PATH).exists() {
-        fs::remove_file(SAVE_FILE_PATH)?;
+      if Path::new(&save_file_path).exists() {
+        fs::remove_file(&save_file_path)?;
       }
       fs::rename(
         Path::new(&format!("{}.zip", TEMP_SAVE_PATH)), 
-        Path::new(SAVE_FILE_PATH)
+        Path::new(&save_file_path)
       )?;
     }
     if Path::new(TEMP_SAVE_PATH).exists() {
@@ -431,8 +432,9 @@ impl State {
   }
 
   fn load(&mut self) -> error::IOResult {
-    if let Err(e) = zip_extract::extract(fs::File::open(Path::new(SAVE_FILE_PATH))?, Path::new("."), false) {
-      log::error!("Load {} failed: {}", SAVE_FILE_PATH, e);
+    let save_file_path = format!("{}.sav", self.level_path.clone().unwrap_or(SAVE_FILE_PATH.to_string()));
+    if let Err(e) = zip_extract::extract(fs::File::open(Path::new(&save_file_path))?, Path::new("."), false) {
+      log::error!("Load {} failed: {}", &save_file_path, e);
     } else {
       self.db = Connection::open_in_memory()?;
       self.init_database()?;

@@ -550,6 +550,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "connect"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "crossterm",
+ "duckdb",
+ "log",
+ "log4rs",
+ "zip-extract",
+ "zip_archive",
+]
+
+[[package]]
 name = "const-random"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -618,21 +633,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a22b2d63d4d1dc0b7f1b6b2747dd0088008a9be28b6ddf0b1e7d335e3037294"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "crossplatform"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "crossterm",
- "duckdb",
- "log",
- "log4rs",
- "zip-extract",
- "zip_archive",
 ]
 
 [[package]]

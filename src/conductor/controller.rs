@@ -72,6 +72,7 @@ impl Controller {
       Some(KeyCode::Left     ) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Left))?;     },
       Some(KeyCode::Char('7')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::UpLeft))?;   },
       Some(KeyCode::Char('5')) => { self.control_state_send.send(state::ControlStatePayload::Select)?;                                 },
+      Some(KeyCode::Char(' ')) => { self.control_state_send.send(state::ControlStatePayload::Select)?;                                 },
       Some(KeyCode::Enter    ) => { self.control_state_send.send(state::ControlStatePayload::Select)?;                                 },
       Some(KeyCode::Char('n')) => { return Ok(ExecutionState::Restart);                                                                },
       Some(KeyCode::Char('u')) => { self.control_state_send.send(state::ControlStatePayload::Undo)?;                                   },

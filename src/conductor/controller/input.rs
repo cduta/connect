@@ -31,7 +31,7 @@ impl Input {
     if poll(time::Duration::from_millis(POLL_WAIT_IN_MS))? {
       match read()? {
         Event::Key(key_event)                                                                       => { self.input_control_send.send(InputControlPayload::Key(key_event))? },
-        Event::Mouse(MouseEvent { kind: MouseEventKind::Down(_), column: x, row: y, modifiers: _ }) => { self.input_control_send.send(InputControlPayload::Mouse((x,y)))?   },
+        Event::Mouse(MouseEvent { kind: MouseEventKind::Down(_), column: x, row: y, modifiers: _ })    |
         Event::Mouse(MouseEvent { kind: MouseEventKind::Drag(_), column: x, row: y, modifiers: _ }) => { self.input_control_send.send(InputControlPayload::Mouse((x,y)))?   },
         Event::Resize(w,h)                                                                          => { self.input_control_send.send(InputControlPayload::Resize((w,h)))?  },
         Event::FocusGained                                                                          => (),

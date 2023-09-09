@@ -15,29 +15,30 @@ const OUTPUT_RATE_IN_MSECS: u64 = 1;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(PartialEq, Eq)]
-pub enum Literal { Unknown,Empty,Wall,U,R,D,L,UR,RD,DL,UL,UD,RL,URD,RDL,UDL,URL,URDL }
+pub enum Literal { Unknown,Empty,Wall,U,R,D,L,UR,RD,DL,UL,UD,RL,URD,RDL,UDL,URL,URDL,String(String) }
 
 impl Display for Literal {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {  
     match self {
-      Literal::Unknown => write!(f, "?"),
-      Literal::Empty   => write!(f, " "),
-      Literal::Wall    => write!(f, "█"),
-      Literal::U       => write!(f, "╵"),
-      Literal::R       => write!(f, "╶"),
-      Literal::D       => write!(f, "╷"),
-      Literal::L       => write!(f, "╴"),
-      Literal::UR      => write!(f, "└"),
-      Literal::RD      => write!(f, "┌"),
-      Literal::DL      => write!(f, "┐"),
-      Literal::UL      => write!(f, "┘"),
-      Literal::UD      => write!(f, "│"),
-      Literal::RL      => write!(f, "─"),
-      Literal::URD     => write!(f, "├"),
-      Literal::RDL     => write!(f, "┬"),
-      Literal::UDL     => write!(f, "┤"),
-      Literal::URL     => write!(f, "┴"),
-      Literal::URDL    => write!(f, "┼")
+      Literal::Unknown   => write!(f, "?"),
+      Literal::Empty     => write!(f, " "),
+      Literal::Wall      => write!(f, "█"),
+      Literal::U         => write!(f, "╵"),
+      Literal::R         => write!(f, "╶"),
+      Literal::D         => write!(f, "╷"),
+      Literal::L         => write!(f, "╴"),
+      Literal::UR        => write!(f, "└"),
+      Literal::RD        => write!(f, "┌"),
+      Literal::DL        => write!(f, "┐"),
+      Literal::UL        => write!(f, "┘"),
+      Literal::UD        => write!(f, "│"),
+      Literal::RL        => write!(f, "─"),
+      Literal::URD       => write!(f, "├"),
+      Literal::RDL       => write!(f, "┬"),
+      Literal::UDL       => write!(f, "┤"),
+      Literal::URL       => write!(f, "┴"),
+      Literal::URDL      => write!(f, "┼"),
+      Literal::String(s) => write!(f, "{}", s)
     }
   }
 }

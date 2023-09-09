@@ -9,6 +9,7 @@ use std::{thread::{self, JoinHandle}, sync::mpsc::{SyncSender, Receiver, TryRecv
 
 use crossterm::event::{KeyEvent, KeyCode, KeyModifiers, KeyEventKind, KeyEventState};
 use clap::Parser;
+use crossterm::style::Color;
 use input::Input;
 use output::{Literal, Char, Output};
 use state::State;
@@ -158,6 +159,9 @@ impl Controller {
       },
       Ok(state::StateControlPayload::ResizeTerminal(size)) => {
         send_handler(exec_state, self.control_output_send.send(output::ControlOutputPayload::ResizeTerminal(size)), "Error resizing terminal")
+      },
+      Ok(state::StateControlPayload::LevelComplete) => {
+        send_handler(exec_state, self.control_output_send.send(output::ControlOutputPayload::PrintChars(vec![Char::new(Literal::String("Level Complete!".to_string()), (1,0), Some(Color::Green))])), "Error printing `level complete`")
       },
       Err(TryRecvError::Disconnected) => { ExecutionState::Error },
       _                               => { exec_state }

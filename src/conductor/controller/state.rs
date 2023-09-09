@@ -26,7 +26,7 @@ pub enum Direction { Up, UpRight, Right, DownRight, Down, DownLeft, Left, UpLeft
 pub enum ControlStatePayload { MoveCursor(Direction), SetCursorPosition((u16,u16)), Select, SetBoardSize((u16,u16)), Undo, Redo, Save, Load, Shutdown }
 
 #[derive(PartialEq, Eq)]
-pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)) }
+pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), LevelComplete }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Object { id: i32, shape: i32, color: Option<Color>, connectors: i32, pos: (u16,u16) }
@@ -236,6 +236,7 @@ impl State {
           })?
       ))?;
     }
+    self.check_win_condition()?;
     Ok(())
   }
 
@@ -343,6 +344,15 @@ impl State {
     Ok(None)
   }
 
+  fn check_win_condition(&self) -> error::IOResult {
+    // Count the shapes (excluding walls)
+    let shape_count: i32 = self.db.query_row(r#"select count(distinct o.shape) from objects as o where o.connectors > 0"#, params![], |row| row.get(0))?;
+    if shape_count == 1 {
+      self.state_control_send.send(StateControlPayload::LevelComplete)?;
+    }
+    Ok(())
+  }
+
   /// Move cursor in a `direction` and notify the updated position to the controller, if the cursor moved to a new position
   /// If the cursor has an object id selected, move the object with the object id as well, then notify the controller 
   fn move_cursor(&mut self, direction: Direction) -> error::IOResult {
@@ -373,6 +383,7 @@ impl State {
         }
       }
       tx.commit()?;
+      self.check_win_condition()?;
     }
     Ok(())
   }
@@ -434,6 +445,7 @@ impl State {
       tx.commit()?;
       self.selected_shape = None;
       self.clear_print_all()?;
+      self.check_win_condition()?;
     }
     Ok(())
   }
@@ -456,6 +468,7 @@ impl State {
       tx.commit()?;
       self.selected_shape = None;
       self.clear_print_all()?;
+      self.check_win_condition()?;
     }
     Ok(())
   }

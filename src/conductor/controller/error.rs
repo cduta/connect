@@ -12,7 +12,8 @@ pub enum IOError {
   StateControlPayloadSend(SendError<state::StateControlPayload>),
   PayloadRecv(RecvError),
   TryPayloadRecv(TryRecvError),
-  DuckDB(duckdb::Error)
+  DuckDB(duckdb::Error),
+  ParseLevelError
 }
 
 impl fmt::Debug for IOError {
@@ -27,7 +28,8 @@ impl fmt::Debug for IOError {
       Self::StateControlPayloadSend(e)  => write!(f, "StateControlPayloadSend {}",  e),
       Self::PayloadRecv(e)              => write!(f, "PayloadRecv {}",              e),
       Self::TryPayloadRecv(e)           => write!(f, "TryPayloadRecv {}",           e),
-      Self::DuckDB(e)                   => write!(f, "DuckDB {}",                   e)
+      Self::DuckDB(e)                   => write!(f, "DuckDB {}",                   e),
+      Self::ParseLevelError             => write!(f, "ParseLevelError"               )
     }
   }
 }
@@ -44,7 +46,8 @@ impl fmt::Display for IOError {
       Self::StateControlPayloadSend(e)  => write!(f, "StateControlPayloadSend {}",  e),
       Self::PayloadRecv(e)              => write!(f, "PayloadRecv {}",              e),
       Self::TryPayloadRecv(e)           => write!(f, "TryPayloadRecv {}",           e),
-      Self::DuckDB(e)                   => write!(f, "DuckDB {}",                   e)
+      Self::DuckDB(e)                   => write!(f, "DuckDB {}",                   e),
+      Self::ParseLevelError             => write!(f, "ParseLevelError",              )
     }
   }
 }
@@ -62,6 +65,7 @@ impl error::Error for IOError {
       Self::PayloadRecv(ref e)              => Some(e),
       Self::TryPayloadRecv(ref e)           => Some(e),
       Self::DuckDB(ref e)                   => Some(e),
+      Self::ParseLevelError                 => None
     }
   }
 }

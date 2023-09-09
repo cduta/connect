@@ -59,20 +59,20 @@ impl Controller {
   fn update_state_on_key_event(&self, key_event: KeyEvent) -> Result<ExecutionState, error::IOError> {
     match if let KeyEvent { code, modifiers: KeyModifiers::NONE, kind: KeyEventKind::Press, state: KeyEventState::NONE } = key_event { Some(code) } else { None } {
       Some(KeyCode::Char('q')) => { return Ok(ExecutionState::Quit);                                                                   },
-      Some(KeyCode::Char('8')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Up))?;       },
+      Some(KeyCode::Char('8'))    |
       Some(KeyCode::Up)        => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Up))?;       },
       Some(KeyCode::Char('9')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::UpRight))?;  },
-      Some(KeyCode::Char('6')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Right))?;    },
+      Some(KeyCode::Char('6'))    |
       Some(KeyCode::Right    ) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Right))?;    },
       Some(KeyCode::Char('3')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::DownRight))?;},
-      Some(KeyCode::Char('2')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Down))?;     },
+      Some(KeyCode::Char('2'))    |
       Some(KeyCode::Down     ) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Down))?;     },
       Some(KeyCode::Char('1')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::DownLeft))?; },
-      Some(KeyCode::Char('4')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Left))?;     },
+      Some(KeyCode::Char('4'))    |
       Some(KeyCode::Left     ) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::Left))?;     },
       Some(KeyCode::Char('7')) => { self.control_state_send.send(state::ControlStatePayload::MoveCursor(state::Direction::UpLeft))?;   },
-      Some(KeyCode::Char('5')) => { self.control_state_send.send(state::ControlStatePayload::Select)?;                                 },
-      Some(KeyCode::Char(' ')) => { self.control_state_send.send(state::ControlStatePayload::Select)?;                                 },
+      Some(KeyCode::Char('5'))    |
+      Some(KeyCode::Char(' '))    |
       Some(KeyCode::Enter    ) => { self.control_state_send.send(state::ControlStatePayload::Select)?;                                 },
       Some(KeyCode::Char('n')) => { return Ok(ExecutionState::Restart);                                                                },
       Some(KeyCode::Char('u')) => { self.control_state_send.send(state::ControlStatePayload::Undo)?;                                   },

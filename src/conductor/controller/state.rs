@@ -101,9 +101,10 @@ impl State {
       end;
     
     create sequence object_seq_id;
+    create sequence shape_seq_id;
     create table objects (
       id         int primary key default nextval('object_seq_id'),
-      shape      int not null,
+      shape      int not null default nextval('shape_seq_id'),
       connectors int not null check (is_connectors(connectors)),
       x          int not null check (is_inbound(x)),
       y          int not null check (is_inbound(y))
@@ -132,16 +133,73 @@ impl State {
   }
 
   fn load_level(&self, level_string: String) -> error::IOResult {
+    // Create temporary parsing table
     self.db.execute(r"
-      insert into objects(shape,connectors,x,y) 
-        select  row_number() over() as shape, char_to_connectors(chars[x]), x, y
+      create temporary table parsed_objects (
+        connectors int not null check (is_connectors(connectors)),
+        x          int not null check (is_inbound(x)),
+        y          int not null check (is_inbound(y))
+      );
+    ", params![])?;
+
+    // Parse the level string
+    self.db.execute(r"
+      insert into parsed_objects(connectors,x,y) 
+        select  char_to_connectors(chars[x]), x, y
         from    (select string_split_regex(?1,'(\r\n|[\r\n])') as rows),
         lateral (select generate_subscripts(rows,1)            as y),
         lateral (select string_split_regex(rows[y],'')         as chars),
         lateral (select generate_subscripts(chars,1)           as x)
         where chars[x] <> ' ';
     ", params![level_string])?;
-    Ok(())
+
+    // Add walls
+    self.db.execute_batch(r#"
+      insert into objects(connectors,x,y)
+      select * from parsed_objects as po where po.connectors = 0;
+
+      delete from parsed_objects
+      where connectors = 0;
+    "#)?;
+
+    // Keep adding objects which together form shapes until no more shapes are added
+    while self.db.execute(r#"
+      insert into objects(shape,connectors,x,y)
+      with recursive form_shape(shape, connectors,x,y) as (
+        (select nextval('shape_seq_id'), po.*
+         from   parsed_objects as po
+         where  po.connectors > 0
+         and    not exists (select 1 
+                            from   objects as o
+                            where  (o.connectors,o.x,o.y) = (po.connectors,po.x,po.y))
+         limit 1)
+          union
+        select  fs.shape, po.*
+        from    form_shape as fs, 
+                parsed_objects as po,
+        lateral (select  0,-1 where fs.connectors & 8 = 8 and po.connectors & 2 = 2 union all
+                 select  1, 0 where fs.connectors & 4 = 4 and po.connectors & 1 = 1 union all
+                 select  0, 1 where fs.connectors & 2 = 2 and po.connectors & 8 = 8 union all
+                 select -1, 0 where fs.connectors & 1 = 1 and po.connectors & 4 = 4          ) as Δ(x,y)
+        where   (fs.x+Δ.x,fs.y+Δ.y) = (po.x,po.y)
+      )
+      select fs.*
+      from   form_shape as fs
+    "#, params![])? > 0 { 
+      self.db.execute(r#"
+        delete from parsed_objects as po
+        where exists (select 1 
+                      from   objects as o
+                      where  (o.connectors,o.x,o.y) = (po.connectors,po.x,po.y))
+      "#, params![])?;
+    }
+
+    if !self.db.query_row("select count(*) == 0 from parsed_objects as po", params![], |row| row.get(0))? {
+      Err(error::IOError::ParseLevelError)
+    } else {
+      self.db.execute("drop table parsed_objects", params![])?;
+      Ok(())      
+    }
   }
 
   fn populate_database(&self) -> error::IOResult { if let Some(level_path) = self.level_path.clone() { self.load_level(fs::read_to_string(level_path)?)?; } Ok(()) }

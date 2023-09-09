@@ -99,6 +99,14 @@ impl State {
         when '├' then 14
         when '┼' then 15
       end;
+
+    
+    -- Returns true, if this and the other object at position (x,y) and (ox,oy) are vertically or horizontally adjacend and both connectors c and oc align
+    create macro "connects?"(c,x,y,oc,ox,oy) as 
+         ((c & 8) = 8 and (oc & 2) = 2 and (x,y) = (ox  ,oy+1))  -- Selected Up    Connector + Potential Down  Connector
+      or ((c & 4) = 4 and (oc & 1) = 1 and (x,y) = (ox-1,oy  ))  -- Selected Right Connector + Potential Left  Connector
+      or ((c & 2) = 2 and (oc & 8) = 8 and (x,y) = (ox  ,oy-1))  -- Selected Down  Connector + Potential Up    Connector
+      or ((c & 1) = 1 and (oc & 4) = 4 and (x,y) = (ox+1,oy  )); -- Selected Left  Connector + Potential Right Connector
     
     create sequence object_seq_id;
     create sequence shape_seq_id;
@@ -176,11 +184,7 @@ impl State {
           union
         select fs.shape, po.*
         from   form_shape as fs, parsed_objects as po
-        --     Is the selected shape vert./horiz. adjacent to a potential merge candidate?
-        where  ((fs.connectors & 8) = 8 and (po.connectors & 2) = 2 and (fs.x,fs.y) = (po.x  ,po.y+1)) -- Selected Up    Connector + Potential Down  Connector
-        or     ((fs.connectors & 4) = 4 and (po.connectors & 1) = 1 and (fs.x,fs.y) = (po.x-1,po.y  )) -- Selected Right Connector + Potential Left  Connector
-        or     ((fs.connectors & 2) = 2 and (po.connectors & 8) = 8 and (fs.x,fs.y) = (po.x  ,po.y-1)) -- Selected Down  Connector + Potential Up    Connector
-        or     ((fs.connectors & 1) = 1 and (po.connectors & 4) = 4 and (fs.x,fs.y) = (po.x+1,po.y  )) -- Selected Left  Connector + Potential Right Connector 
+        where  "connects?"(fs.connectors, fs.x, fs.y, po.connectors, po.x, po.y)
       )
       select fs.*
       from   form_shape as fs
@@ -330,11 +334,7 @@ impl State {
                               and    exists (select 1
                                              from   objects as _o -- Selected shape
                                              where  _o.shape = ?1
-                                             --     Is the selected shape vert./horiz. adjacent to a potential merge candidate?
-                                             and    (((_o.connectors & 8) = 8 and (o.connectors & 2) = 2 and (_o.x,_o.y) = (o.x  ,o.y+1))    -- Selected Up    Connector + Potential Down  Connector
-                                             or      ((_o.connectors & 4) = 4 and (o.connectors & 1) = 1 and (_o.x,_o.y) = (o.x-1,o.y  ))    -- Selected Right Connector + Potential Left  Connector
-                                             or      ((_o.connectors & 2) = 2 and (o.connectors & 8) = 8 and (_o.x,_o.y) = (o.x  ,o.y-1))    -- Selected Down  Connector + Potential Up    Connector
-                                             or      ((_o.connectors & 1) = 1 and (o.connectors & 4) = 4 and (_o.x,_o.y) = (o.x+1,o.y  ))))) -- Selected Left  Connector + Potential Right Connector 
+                                             and    "connects?"(_o.connectors, _o.x, _o.y, o.connectors, o.x, o.y)))
           "#, params![shape])?;
           return Ok(Some((here_shape, State::objects_by_shape_via_tx_with_color(tx, shape, Some(Color::White))?)));
         }

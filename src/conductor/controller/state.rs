@@ -144,7 +144,7 @@ impl State {
     Ok(())
   }
 
-  fn populate_database(&self) -> error::IOResult { self.load_level(fs::read_to_string("levels/01-simple.lvl")?) }
+  fn populate_database(&self) -> error::IOResult { if let Some(level_path) = self.level_path.clone() { self.load_level(fs::read_to_string(level_path)?)?; } Ok(()) }
 
   fn shutdown_database(self) -> error::IOResult {
     if let Some((_,e)) = self.db.close().err() { 

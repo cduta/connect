@@ -160,8 +160,12 @@ impl Controller {
       Ok(state::StateControlPayload::ResizeTerminal(size)) => {
         send_handler(exec_state, self.control_output_send.send(output::ControlOutputPayload::ResizeTerminal(size)), "Error resizing terminal")
       },
-      Ok(state::StateControlPayload::LevelComplete) => {
-        send_handler(exec_state, self.control_output_send.send(output::ControlOutputPayload::PrintChars(vec![Char::new(Literal::String("Level Complete!".to_string()), (1,0), Some(Color::Green))])), "Error printing `level complete`")
+      Ok(state::StateControlPayload::TurnCounter(turn, complete)) => {
+        send_handler(exec_state, self.control_output_send.send(
+          output::ControlOutputPayload::PrintChars(vec![
+            Char::new(Literal::String(format!("Turn: {}{}", turn, if complete {" ✓"} else {""})), (1,0), if complete {Some(Color::Green)} else {Some(Color::DarkGrey)})]
+          )
+        ), "Error printing `level complete`")
       },
       Err(TryRecvError::Disconnected) => { ExecutionState::Error },
       _                               => { exec_state }

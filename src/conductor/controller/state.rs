@@ -26,7 +26,7 @@ pub enum Direction { Up, UpRight, Right, DownRight, Down, DownLeft, Left, UpLeft
 pub enum ControlStatePayload { MoveCursor(Direction), SetCursorPosition((u16,u16)), Select, SetBoardSize((u16,u16)), Undo, Redo, Save, Load, Shutdown }
 
 #[derive(PartialEq, Eq)]
-pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), LevelComplete }
+pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), TurnCounter(i32,bool) }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Object { id: i32, shape: i32, color: Option<Color>, connectors: i32, pos: (u16,u16) }
@@ -236,7 +236,7 @@ impl State {
           })?
       ))?;
     }
-    self.check_win_condition()?;
+    self.print_turn_counter()?;
     Ok(())
   }
 
@@ -307,7 +307,7 @@ impl State {
         // Insert current state into undo
         tx.execute_batch(r#"
           insert into undo 
-            select coalesce((select max(u.turn)+1 from undo as u), 1), o.*
+            select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0), o.*
             from   objects as o;
 
           delete from redo;
@@ -344,12 +344,15 @@ impl State {
     Ok(None)
   }
 
-  fn check_win_condition(&self) -> error::IOResult {
+  fn print_turn_counter(&self) -> error::IOResult {
     // Count the shapes (excluding walls)
-    let shape_count: i32 = self.db.query_row(r#"select count(distinct o.shape) from objects as o where o.connectors > 0"#, params![], |row| row.get(0))?;
-    if shape_count == 1 {
-      self.state_control_send.send(StateControlPayload::LevelComplete)?;
-    }
+    let (shape_count, turn): (i32,i32) = self.db.query_row(r#"
+      select count(distinct o.shape),  
+             coalesce((select max(u.turn)+1 from undo as u), 
+                      (select min(r.turn)-1 from redo as r), 0)
+      from   objects as o 
+      where  o.connectors > 0"#, params![], |row| Ok((row.get(0)?,row.get(1)?)))?;
+    self.state_control_send.send(StateControlPayload::TurnCounter(turn,shape_count == 1))?;
     Ok(())
   }
 
@@ -383,7 +386,7 @@ impl State {
         }
       }
       tx.commit()?;
-      self.check_win_condition()?;
+      self.print_turn_counter()?;
     }
     Ok(())
   }
@@ -445,7 +448,7 @@ impl State {
       tx.commit()?;
       self.selected_shape = None;
       self.clear_print_all()?;
-      self.check_win_condition()?;
+      self.print_turn_counter()?;
     }
     Ok(())
   }
@@ -468,7 +471,7 @@ impl State {
       tx.commit()?;
       self.selected_shape = None;
       self.clear_print_all()?;
-      self.check_win_condition()?;
+      self.print_turn_counter()?;
     }
     Ok(())
   }

@@ -174,14 +174,13 @@ impl State {
                             where  (o.connectors,o.x,o.y) = (po.connectors,po.x,po.y))
          limit 1)
           union
-        select  fs.shape, po.*
-        from    form_shape as fs, 
-                parsed_objects as po,
-        lateral (select  0,-1 where fs.connectors & 8 = 8 and po.connectors & 2 = 2 union all
-                 select  1, 0 where fs.connectors & 4 = 4 and po.connectors & 1 = 1 union all
-                 select  0, 1 where fs.connectors & 2 = 2 and po.connectors & 8 = 8 union all
-                 select -1, 0 where fs.connectors & 1 = 1 and po.connectors & 4 = 4          ) as Δ(x,y)
-        where   (fs.x+Δ.x,fs.y+Δ.y) = (po.x,po.y)
+        select fs.shape, po.*
+        from   form_shape as fs, parsed_objects as po
+        --     Is the selected shape vert./horiz. adjacent to a potential merge candidate?
+        where  ((fs.connectors & 8) = 8 and (po.connectors & 2) = 2 and (fs.x,fs.y) = (po.x  ,po.y+1)) -- Selected Up    Connector + Potential Down  Connector
+        or     ((fs.connectors & 4) = 4 and (po.connectors & 1) = 1 and (fs.x,fs.y) = (po.x-1,po.y  )) -- Selected Right Connector + Potential Left  Connector
+        or     ((fs.connectors & 2) = 2 and (po.connectors & 8) = 8 and (fs.x,fs.y) = (po.x  ,po.y-1)) -- Selected Down  Connector + Potential Up    Connector
+        or     ((fs.connectors & 1) = 1 and (po.connectors & 4) = 4 and (fs.x,fs.y) = (po.x+1,po.y  )) -- Selected Left  Connector + Potential Right Connector 
       )
       select fs.*
       from   form_shape as fs

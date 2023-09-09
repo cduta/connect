@@ -13,3 +13,8 @@ r: Redo
 s: Save Game
 l: Load Game
 q: Quit
+
+# Create Your Own Levels
+
+Use the following characters:
+█╵╶╷╴└┌┐┘│─├┬┤┴┼ 

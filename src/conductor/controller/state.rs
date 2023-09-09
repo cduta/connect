@@ -26,7 +26,7 @@ pub enum Direction { Up, UpRight, Right, DownRight, Down, DownLeft, Left, UpLeft
 pub enum ControlStatePayload { MoveCursor(Direction), SetCursorPosition((u16,u16)), Select, SetBoardSize((u16,u16)), Undo, Redo, Save, Load, Shutdown }
 
 #[derive(PartialEq, Eq)]
-pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), TurnCounter(i32,bool) }
+pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), TurnCounter(u16,i32,bool) }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Object { id: i32, shape: i32, color: Option<Color>, connectors: i32, pos: (u16,u16) }
@@ -352,7 +352,7 @@ impl State {
                       (select min(r.turn)-1 from redo as r), 0)
       from   objects as o 
       where  o.connectors > 0"#, params![], |row| Ok((row.get(0)?,row.get(1)?)))?;
-    self.state_control_send.send(StateControlPayload::TurnCounter(turn,shape_count == 1))?;
+    self.state_control_send.send(StateControlPayload::TurnCounter(self.db.query_row("select max(o.y) from objects as o", params![], |row| row.get(0)).optional()?.map(|v_pos: u16| v_pos+1).unwrap_or(0), turn,shape_count == 1))?;
     Ok(())
   }
 

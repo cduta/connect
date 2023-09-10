@@ -354,9 +354,13 @@ impl State {
   /// Count the shapes exluding walls
   fn is_complete(&self) -> Result<bool, duckdb::Error> {
     self.db.query_row(r#"
-      select count(distinct o.shape) = 1
-      from   objects as o 
-      where  o.connectors > 0
+      select not exists (select 1
+                         from   objects as o 
+                         where  o.connectors > 0
+                         and    (o.connectors & 8) = 8 and not exists (select 1 from objects as _o where (_o.connectors & 2) = 2 and (o.x,o.y) = (_o.x  ,_o.y+1))
+                         or     (o.connectors & 4) = 4 and not exists (select 1 from objects as _o where (_o.connectors & 1) = 1 and (o.x,o.y) = (_o.x-1,_o.y  ))
+                         or     (o.connectors & 2) = 2 and not exists (select 1 from objects as _o where (_o.connectors & 8) = 8 and (o.x,o.y) = (_o.x  ,_o.y-1))
+                         or     (o.connectors & 1) = 1 and not exists (select 1 from objects as _o where (_o.connectors & 4) = 4 and (o.x,o.y) = (_o.x+1,_o.y  )))
     "#, params![], |row| row.get(0))
   }
 
@@ -817,10 +821,14 @@ mod tests {
     fn simple_two_shape_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 2, 0b0110, 3, 1)?; // ┌ 
-      add_object(&state, 1, 0b0011, 1, 1)?; // ┐
-      add_object(&state, 2, 0b1001, 3, 2)?; // ┘
+      add_object(&state, 1, 0b0110, 1, 1)?; // ┌ 
+      add_object(&state, 1, 0b0011, 2, 1)?; // ┐
+      add_object(&state, 1, 0b1001, 2, 2)?; // ┘
       add_object(&state, 1, 0b1100, 1, 2)?; // └
+      add_object(&state, 2, 0b0110, 4, 1)?; // ┌ 
+      add_object(&state, 2, 0b0011, 5, 1)?; // ┐
+      add_object(&state, 2, 0b1001, 5, 2)?; // ┘
+      add_object(&state, 2, 0b1100, 4, 2)?; // └
       assert_eq!(state.is_complete()?, true);
       Ok(())
     }

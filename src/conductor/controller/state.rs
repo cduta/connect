@@ -354,7 +354,7 @@ impl State {
   /// Count the shapes exluding walls
   fn is_complete(&self) -> Result<bool, duckdb::Error> {
     self.db.query_row(r#"
-      select count(distinct o.shape)
+      select count(distinct o.shape) = 1
       from   objects as o 
       where  o.connectors > 0
     "#, params![], |row| row.get(0))

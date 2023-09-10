@@ -25,7 +25,7 @@ pub enum Direction { Up, UpRight, Right, DownRight, Down, DownLeft, Left, UpLeft
 #[derive(PartialEq, Eq)]
 pub enum ControlStatePayload { MoveCursor(Direction), SetCursorPosition((u16,u16)), Select, SetBoardSize((u16,u16)), Undo, Redo, Save, Load, Shutdown }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), TurnCounter(u16,i32,bool) }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -344,15 +344,30 @@ impl State {
     Ok(None)
   }
 
-  fn print_turn_counter(&self) -> error::IOResult {
-    // Count the shapes (excluding walls)
-    let (shape_count, turn): (i32,i32) = self.db.query_row(r#"
-      select count(distinct o.shape),  
-             coalesce((select max(u.turn)+1 from undo as u), 
-                      (select min(r.turn)-1 from redo as r), 0)
+  /// The turn counter
+  fn get_turn_count(&self) -> Result<i32, duckdb::Error> {
+    self.db.query_row(r#"
+      select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0) as turn
+    "#, params![], |row| row.get(0))
+  }
+
+  /// Count the shapes exluding walls
+  fn is_complete(&self) -> Result<bool, duckdb::Error> {
+    self.db.query_row(r#"
+      select count(distinct o.shape)
       from   objects as o 
-      where  o.connectors > 0"#, params![], |row| Ok((row.get(0)?,row.get(1)?)))?;
-    self.state_control_send.send(StateControlPayload::TurnCounter(self.db.query_row("select max(o.y) from objects as o", params![], |row| row.get(0)).optional()?.map(|v_pos: u16| v_pos+1).unwrap_or(0), turn,shape_count == 1))?;
+      where  o.connectors > 0
+    "#, params![], |row| row.get(0))
+  }
+
+  /// Print the turn counter and an indicator, if the level is complete
+  fn print_turn_counter(&self) -> error::IOResult {
+    self.state_control_send.send(
+      StateControlPayload::TurnCounter(
+        self.db.query_row("select max(o.y) from objects as o", params![], |row| row.get(0)).optional()?.map(|v_pos: u16| v_pos+1).unwrap_or(0),
+        self.get_turn_count()?, 
+        self.is_complete()?
+      ))?;
     Ok(())
   }
 
@@ -361,16 +376,18 @@ impl State {
   fn move_cursor(&mut self, direction: Direction) -> error::IOResult {
     let cursor_here@(here_x,here_y)    = self.cursor_position();
     if let Some(cursor_there@(there_x,there_y)) = State::move_cursor_to(&cursor_here, direction, self.board_size, self.selected_shape.is_some()) {
-      let mut do_move = cursor_here != cursor_there;
-      let mut db      = self.db.try_clone()?;
-      let tx          = db.transaction()?;
-      if do_move {
+      let mut do_cursor_move = cursor_here != cursor_there;
+      let mut do_shape_move  = false;
+      let mut db             = self.db.try_clone()?;
+      let tx                 = db.transaction()?;
+      if do_cursor_move {
         if let Some(shape) = self.selected_shape {
           match State::move_shape(&tx, shape, (i32::from(there_x)-i32::from(here_x),i32::from(there_y)-i32::from(here_y)), self.board_size) {
-            Ok(None)                            => { do_move = false },
+            Ok(None)                            => { do_cursor_move = false },
             Ok(Some((here_shape, there_shape))) => {
-              do_move = here_shape.len() != there_shape.len() || here_shape.iter().enumerate().any(|(i,here)| here.pos != there_shape[i].pos);
-              if do_move {
+              do_shape_move  = here_shape.len() != there_shape.len() || here_shape.iter().enumerate().any(|(i,here)| here.pos != there_shape[i].pos);
+              do_cursor_move = do_shape_move;
+              if do_shape_move {
                 self.state_control_send.send(StateControlPayload::MoveShape(here_shape,there_shape))?; // Note: An object always moves before the cursor.
               } 
             },
@@ -380,13 +397,13 @@ impl State {
             },
           }
         } 
-        if do_move {
+        if do_cursor_move {
           self.cursor_pos = cursor_there;
           self.state_control_send.send(StateControlPayload::SetCursorPosition((self.cursor_pos.0, self.cursor_pos.1)))?;
         }
       }
       tx.commit()?;
-      self.print_turn_counter()?;
+      if do_shape_move { self.print_turn_counter()?; }
     }
     Ok(())
   }
@@ -640,27 +657,40 @@ mod tests {
 
       let dummy_thread = thread::spawn(move || {
         fn assert_received_cursor_position(dummy_recv: &Receiver<StateControlPayload>, expected_pos: (u16,u16)) {
-          if let Ok(StateControlPayload::SetCursorPosition(actual_pos)) = dummy_recv.recv() { 
-            assert_eq!(actual_pos, expected_pos)
-          } else { 
-            panic!("Did not receive expected payload") 
+          match dummy_recv.recv() {
+            Ok(StateControlPayload::SetCursorPosition(actual_pos)) => assert_eq!(actual_pos, expected_pos),
+            Ok(payload)                                            => panic!("Did not receive SetCursorPosition: {:?}", payload),
+            Err(e)                                                 => panic!("Failed to receive SetCursorPosition: {}", e)
           }
         }
-        fn assert_received_object_movement(dummy_recv: &Receiver<StateControlPayload>, expected_here: Object, expected_there: Object) {
-          if let Ok(StateControlPayload::MoveShape(here_shape,there_shape)) = dummy_recv.recv() { 
-            assert_eq!(here_shape.len(), 1);
-            assert_eq!(there_shape.len(), 1);
-            assert_eq!((here_shape[0], there_shape[0]), (expected_here, expected_there))
-          } else { 
-            panic!("Did not receive expected payload") 
+        fn assert_received_shape_movement(dummy_recv: &Receiver<StateControlPayload>, expected_here: Object, expected_there: Object) {
+          match dummy_recv.recv() {
+            Ok(StateControlPayload::MoveShape(here_shape,there_shape)) =>  { 
+              assert_eq!(here_shape.len(), 1);
+              assert_eq!(there_shape.len(), 1);
+              assert_eq!((here_shape[0], there_shape[0]), (expected_here, expected_there))
+            },
+            Ok(payload)                                            => panic!("Did not receive MoveShape: {:?}", payload),
+            Err(e)                                                 => panic!("Failed to receive MoveShape: {}", e)
           }
         }
         fn assert_received_print_objects(dummy_recv: &Receiver<StateControlPayload>, expected_obj: Object) {
-          if let Ok(StateControlPayload::PrintObjects(shape)) = dummy_recv.recv() { 
-            assert_eq!(shape.len(), 1);
-            assert_eq!(shape[0], expected_obj)
-          } else { 
-            panic!("Did not receive expected payload") 
+          match dummy_recv.recv() {
+            Ok(StateControlPayload::PrintObjects(shape)) =>  { 
+              assert_eq!(shape.len(), 1);
+              assert_eq!(shape[0], expected_obj)
+            },
+            Ok(payload)                                            => panic!("Did not receive PrintObjects: {:?}", payload),
+            Err(e)                                                 => panic!("Failed to receive PrintObjects: {}", e)
+          }
+        }
+        fn assert_received_turn_counter(dummy_recv: &Receiver<StateControlPayload>, expected_y_pos: u16, expected_turn: i32, expected_complete: bool) {
+          match dummy_recv.recv() {
+            Ok(StateControlPayload::TurnCounter(y_pos,turn,complete)) =>  { 
+              assert_eq!((y_pos,turn,complete),(expected_y_pos,expected_turn,expected_complete));
+            },
+            Ok(payload)                                            => panic!("Did not receive TurnCounter: {:?}", payload),
+            Err(e)                                                 => panic!("Failed to receive TurnCounter: {}", e)
           }
         }
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+1,INITIAL_CURSOR_POS_Y));
@@ -669,16 +699,21 @@ mod tests {
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+2));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+3));
           assert_received_print_objects(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y), Some(Color::White)));
-        assert_received_object_movement(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y), None), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
+         assert_received_shape_movement(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y), None), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
-        assert_received_object_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X-1,Y+1), Some(Color::White)));
+           assert_received_turn_counter(&dummy_recv, 5, 1, false);
+         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X-1,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+1,INITIAL_CURSOR_POS_Y+4));
-        assert_received_object_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X-1,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
+           assert_received_turn_counter(&dummy_recv, 5, 2, false);
+         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X-1,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
-        assert_received_object_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y), Some(Color::White)));
+           assert_received_turn_counter(&dummy_recv, 5, 3, false);
+         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+3));
-        assert_received_object_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
+           assert_received_turn_counter(&dummy_recv, 4, 4, false);
+         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
+           assert_received_turn_counter(&dummy_recv, 5, 5, false);
           assert_received_print_objects(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::DarkGrey)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+3,INITIAL_CURSOR_POS_Y+4));
       });
@@ -731,6 +766,62 @@ mod tests {
       assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y+1))));
       assert_eq!(state.selected_shape, None);
       if !dummy_thread.is_finished() { thread::sleep(time::Duration::from_secs(WAIT_FOR_DUMMY_THREAD_IN_SECS)); if !dummy_thread.is_finished() { panic!("Thread did not finish after waiting for it for at least {} seconds", WAIT_FOR_DUMMY_THREAD_IN_SECS) } }
+      Ok(())
+    }
+
+    #[test]
+    /// ┌┐ 
+    /// └┘
+    fn simple_complete() -> error::IOResult {
+      let (state, _, _) = State::new()?;
+      state.init_database()?;
+      add_object(&state, 1, 0b0110, 1, 1)?; // ┌ 
+      add_object(&state, 1, 0b0011, 2, 1)?; // ┐
+      add_object(&state, 1, 0b1001, 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100, 1, 2)?; // └
+      assert_eq!(state.is_complete()?, true);
+      Ok(())
+    }
+
+    #[test]
+    /// ┐┌ 
+    /// └┘
+    fn simple_single_shape_incomplete() -> error::IOResult {
+      let (state, _, _) = State::new()?;
+      state.init_database()?;
+      add_object(&state, 1, 0b0110, 2, 1)?; // ┌ 
+      add_object(&state, 1, 0b0011, 1, 1)?; // ┐
+      add_object(&state, 1, 0b1001, 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100, 1, 2)?; // └
+      assert_eq!(state.is_complete()?, false);
+      Ok(())
+    }
+
+    #[test]
+    /// ┐ ┌ 
+    /// └ ┘
+    fn simple_two_shape_incomplete() -> error::IOResult {
+      let (state, _, _) = State::new()?;
+      state.init_database()?;
+      add_object(&state, 2, 0b0110, 3, 1)?; // ┌ 
+      add_object(&state, 1, 0b0011, 1, 1)?; // ┐
+      add_object(&state, 2, 0b1001, 3, 2)?; // ┘
+      add_object(&state, 1, 0b1100, 1, 2)?; // └
+      assert_eq!(state.is_complete()?, false);
+      Ok(())
+    }
+
+    #[test]
+    /// ┌┐ ┌┐ 
+    /// └┘ └┘
+    fn simple_two_shape_complete() -> error::IOResult {
+      let (state, _, _) = State::new()?;
+      state.init_database()?;
+      add_object(&state, 2, 0b0110, 3, 1)?; // ┌ 
+      add_object(&state, 1, 0b0011, 1, 1)?; // ┐
+      add_object(&state, 2, 0b1001, 3, 2)?; // ┘
+      add_object(&state, 1, 0b1100, 1, 2)?; // └
+      assert_eq!(state.is_complete()?, true);
       Ok(())
     }
 }

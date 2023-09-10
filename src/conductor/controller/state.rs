@@ -344,33 +344,28 @@ impl State {
     Ok(None)
   }
 
-  /// The turn counter
-  fn get_turn_count(&self) -> Result<i32, duckdb::Error> {
+  /// Return turn counter and true, if the level is complete
+  fn turn_state(&self) -> Result<(i32,bool), duckdb::Error> {
     self.db.query_row(r#"
-      select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0) as turn
-    "#, params![], |row| row.get(0))
-  }
-
-  /// Count the shapes exluding walls
-  fn is_complete(&self) -> Result<bool, duckdb::Error> {
-    self.db.query_row(r#"
-      select not exists (select 1
+      select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0) as turn,
+             not exists (select 1
                          from   objects as o 
                          where  o.connectors > 0
                          and    (o.connectors & 8) = 8 and not exists (select 1 from objects as _o where (_o.connectors & 2) = 2 and (o.x,o.y) = (_o.x  ,_o.y+1))
                          or     (o.connectors & 4) = 4 and not exists (select 1 from objects as _o where (_o.connectors & 1) = 1 and (o.x,o.y) = (_o.x-1,_o.y  ))
                          or     (o.connectors & 2) = 2 and not exists (select 1 from objects as _o where (_o.connectors & 8) = 8 and (o.x,o.y) = (_o.x  ,_o.y-1))
-                         or     (o.connectors & 1) = 1 and not exists (select 1 from objects as _o where (_o.connectors & 4) = 4 and (o.x,o.y) = (_o.x+1,_o.y  )))
-    "#, params![], |row| row.get(0))
+                         or     (o.connectors & 1) = 1 and not exists (select 1 from objects as _o where (_o.connectors & 4) = 4 and (o.x,o.y) = (_o.x+1,_o.y  ))) as is_complete
+    "#, params![], |row| Ok((row.get(0)?,row.get(1)?)))
   }
 
   /// Print the turn counter and an indicator, if the level is complete
   fn print_turn_counter(&self) -> error::IOResult {
+    let (turn_count,is_complete) = self.turn_state()?;
     self.state_control_send.send(
       StateControlPayload::TurnCounter(
         self.db.query_row("select max(o.y) from objects as o", params![], |row| row.get(0)).optional()?.map(|v_pos: u16| v_pos+1).unwrap_or(0),
-        self.get_turn_count()?, 
-        self.is_complete()?
+        turn_count, 
+        is_complete
       ))?;
     Ok(())
   }
@@ -783,7 +778,7 @@ mod tests {
       add_object(&state, 1, 0b0011, 2, 1)?; // ┐
       add_object(&state, 1, 0b1001, 2, 2)?; // ┘
       add_object(&state, 1, 0b1100, 1, 2)?; // └
-      assert_eq!(state.is_complete()?, true);
+      assert_eq!(state.turn_state()?.1, true);
       Ok(())
     }
 
@@ -797,7 +792,7 @@ mod tests {
       add_object(&state, 1, 0b0011, 1, 1)?; // ┐
       add_object(&state, 1, 0b1001, 2, 2)?; // ┘
       add_object(&state, 1, 0b1100, 1, 2)?; // └
-      assert_eq!(state.is_complete()?, false);
+      assert_eq!(state.turn_state()?.1, false);
       Ok(())
     }
 
@@ -811,7 +806,7 @@ mod tests {
       add_object(&state, 1, 0b0011, 1, 1)?; // ┐
       add_object(&state, 2, 0b1001, 3, 2)?; // ┘
       add_object(&state, 1, 0b1100, 1, 2)?; // └
-      assert_eq!(state.is_complete()?, false);
+      assert_eq!(state.turn_state()?.1, false);
       Ok(())
     }
 
@@ -829,7 +824,7 @@ mod tests {
       add_object(&state, 2, 0b0011, 5, 1)?; // ┐
       add_object(&state, 2, 0b1001, 5, 2)?; // ┘
       add_object(&state, 2, 0b1100, 4, 2)?; // └
-      assert_eq!(state.is_complete()?, true);
+      assert_eq!(state.turn_state()?.1, true);
       Ok(())
     }
 }

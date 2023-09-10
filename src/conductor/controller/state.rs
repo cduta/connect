@@ -524,19 +524,22 @@ impl State {
   }
 
   fn load(&mut self) -> error::IOResult {
-    let save_file_path = self.get_save_file_path();
-    if let Err(e) = zip_extract::extract(fs::File::open(Path::new(&save_file_path))?, Path::new("."), false) {
-      log::error!("Load {} failed: {}", &save_file_path, e);
-    } else {
-      self.db = Connection::open_in_memory()?;
-      self.init_database()?;
-      self.db.execute_batch(fs::read_to_string(Path::new(format!("{}/load.sql", TEMP_SAVE_PATH).as_str()))?.as_str())?;
+    let save_file_path_string = self.get_save_file_path();
+    let save_file_path = Path::new(&save_file_path_string);
+    if Path::exists(save_file_path) {
+      if let Err(e) = zip_extract::extract(fs::File::open(Path::new(save_file_path))?, Path::new("."), false) {
+        log::error!("Load file at path {} failed: {}", &save_file_path_string, e);
+      } else {
+        self.db = Connection::open_in_memory()?;
+        self.init_database()?;
+        self.db.execute_batch(fs::read_to_string(Path::new(format!("{}/load.sql", TEMP_SAVE_PATH).as_str()))?.as_str())?;
+      }
+      if Path::new(TEMP_SAVE_PATH).exists() {
+        fs::remove_dir_all(TEMP_SAVE_PATH)?;
+      }
+      self.selected_shape = None;
+      self.clear_print_all()?;
     }
-    if Path::new(TEMP_SAVE_PATH).exists() {
-      fs::remove_dir_all(TEMP_SAVE_PATH)?;
-    }
-    self.selected_shape = None;
-    self.clear_print_all()?;
     Ok(())
   }
   

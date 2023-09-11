@@ -11,7 +11,7 @@ use crossterm::event::{KeyEvent, KeyCode, KeyModifiers, KeyEventKind, KeyEventSt
 use clap::Parser;
 use crossterm::style::Color;
 use input::Input;
-use output::{Literal, Char, Output};
+use output::{Literal, Char, Output, Feat};
 use state::State;
 use log::error;
 
@@ -91,21 +91,21 @@ impl Controller {
     match connectors {
       //URDL
       0b0000 => output::Literal::Wall,
-      0b0001 => output::Literal::L,
-      0b0010 => output::Literal::D,
-      0b0011 => output::Literal::DL,
-      0b0100 => output::Literal::R,
-      0b0101 => output::Literal::RL,
-      0b0110 => output::Literal::RD,
-      0b0111 => output::Literal::RDL,
-      0b1000 => output::Literal::U,
-      0b1001 => output::Literal::UL,
-      0b1010 => output::Literal::UD,
-      0b1011 => output::Literal::UDL,
-      0b1100 => output::Literal::UR,
-      0b1101 => output::Literal::URL,
-      0b1110 => output::Literal::URD,
-      0b1111 => output::Literal::URDL,
+      0b0001 => output::Literal::L(Feat::None),
+      0b0010 => output::Literal::D(Feat::None),
+      0b0011 => output::Literal::DL(Feat::None),
+      0b0100 => output::Literal::R(Feat::None),
+      0b0101 => output::Literal::RL(Feat::None),
+      0b0110 => output::Literal::RD(Feat::None),
+      0b0111 => output::Literal::RDL(Feat::None),
+      0b1000 => output::Literal::U(Feat::None),
+      0b1001 => output::Literal::UL(Feat::None),
+      0b1010 => output::Literal::UD(Feat::None),
+      0b1011 => output::Literal::UDL(Feat::None),
+      0b1100 => output::Literal::UR(Feat::None),
+      0b1101 => output::Literal::URL(Feat::None),
+      0b1110 => output::Literal::URD(Feat::None),
+      0b1111 => output::Literal::URDL(Feat::None),
            _ => output::Literal::Unknown
     }
   }

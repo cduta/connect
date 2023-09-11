@@ -13,6 +13,7 @@ use super::error;
 const SYNC_BUFFER_SIZE    : usize = 0;
 const OUTPUT_RATE_IN_MSECS: u64 = 1;
 
+#[allow(dead_code)]
 #[derive(PartialEq, Eq)]
 pub enum Feat { None, Wide(i32), Door(i32)}
 

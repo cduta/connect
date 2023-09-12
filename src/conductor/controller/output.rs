@@ -17,15 +17,16 @@ const OUTPUT_RATE_IN_MSECS: u64 = 1;
 #[derive(PartialEq, Eq)]
 pub enum Feat { None, Wide(i32), Door(i32)}
 
-#[allow(clippy::upper_case_acronyms)]
+#[allow(clippy::upper_case_acronyms,dead_code)]
 #[derive(PartialEq, Eq)]
-pub enum Literal { Unknown,Empty,Wall,U(Feat),R(Feat),D(Feat),L(Feat),UR(Feat),RD(Feat),DL(Feat),UL(Feat),UD(Feat),RL(Feat),URD(Feat),RDL(Feat),UDL(Feat),URL(Feat),URDL(Feat),String(String) }
+pub enum Literal { Unknown,Empty,Wall,Explosive,U(Feat),R(Feat),D(Feat),L(Feat),UR(Feat),RD(Feat),DL(Feat),UL(Feat),UD(Feat),RL(Feat),URD(Feat),RDL(Feat),UDL(Feat),URL(Feat),URDL(Feat),String(String) }
 
 impl Display for Literal {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {  
     match self {
       Literal::Empty                    => write!(f, " "),
       Literal::Wall                     => write!(f, "█"),
+      Literal::Explosive                => write!(f, "◊"),
       Literal::U(Feat::None)            => write!(f, "╵"),
       Literal::U(Feat::Wide(0b1000))    => write!(f, "╹"),
       Literal::R(Feat::None)            => write!(f, "╶"),

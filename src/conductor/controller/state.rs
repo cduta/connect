@@ -6,7 +6,6 @@ use zip_archive::Archiver;
 use crate::common;
 
 use super::error;
-use super::output;
 
 type MoveObjectResult = Result<Option<(Vec<Object>,Vec<Object>)>, error::IOError>;
 
@@ -29,15 +28,16 @@ pub enum ControlStatePayload { MoveCursor(Direction), SetCursorPosition((u16,u16
 #[derive(Debug, PartialEq, Eq)]
 pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), TurnCounter(u16,i32,bool) }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Object { id: i32, shape: i32, color: Option<Color>, connectors: i32, pos: (u16,u16) }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Object { id: i32, shape: i32, color: Option<Color>, connectors: i32, kind: String, pos: (u16,u16) }
 
 impl Object {
-  fn new(id: i32, shape: i32, connectors: i32, pos: (u16,u16)) -> Self { Object { id, shape, connectors, pos, color: None } }
-  fn new_with_color(id: i32, shape: i32, connectors: i32, pos: (u16,u16), color: Option<Color>) -> Self { Object { id, shape, connectors, pos, color } }
+  fn new(id: i32, shape: i32, connectors: i32, kind: String, pos: (u16,u16)) -> Self { Object { id, shape, connectors, kind, pos, color: None } }
+  fn new_with_color(id: i32, shape: i32, connectors: i32, kind: String, pos: (u16,u16), color: Option<Color>) -> Self { Object { id, shape, connectors, kind, pos, color } }
   pub fn connectors(&self) -> i32 { self.connectors }
   pub fn pos(&self) -> (u16,u16) { self.pos }
   pub fn color(&self) -> Option<Color> { self.color }
+  pub fn kind(&self) -> String { self.kind.clone() }
 }
 
 pub struct State {
@@ -128,8 +128,8 @@ impl State {
         when c =   '┧'      then ( 2 << 4) + 9
         when c =   '┩'      then ( 9 << 4) + 2
         when c =   '┪'      then ( 3 << 4) + 8
-        when c in ('┥','╡') then (10 << 4) + 1
-        when c in ('┨','╡') then ( 1 << 4) + 10
+        when c in ('┥','╡') then ( 1 << 4) + 10
+        when c in ('┨','╢') then (10 << 4) + 1
         when c in ('┫','╣') then (11 << 4)
         when c =   '└'      then  12
         when c in ('┖','╙') then ( 8 << 4) + 4
@@ -302,20 +302,20 @@ impl State {
     if let Some(selected_shape) = self.selected_shape {
       self.state_control_send.send(StateControlPayload::PrintObjects(
         State::query_objects_via_statement(
-          self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o")?,
+          self.db.prepare("select o.id, o.shape, o.connectors, o.kind::text, o.x, o.y from objects as o")?,
           params![],
           |row| {
             let shape: i32 = row.get(1)?;
-            Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), Some(if selected_shape == shape { Color::White } else { Color::DarkGrey })))
+            Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, (row.get(4)?,row.get(5)?), Some(if selected_shape == shape { Color::White } else { Color::DarkGrey })))
           })?
       ))?;
     } else {
       self.state_control_send.send(StateControlPayload::PrintObjects(
         State::query_objects_via_statement(
-          self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o")?,
+          self.db.prepare("select o.id, o.shape, o.connectors, o.kind::text, o.x, o.y from objects as o")?,
           params![],
           |row| {
-            Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), Some(Color::DarkGrey)))
+            Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, (row.get(4)?,row.get(5)?), Some(Color::DarkGrey)))
           })?
       ))?;
     }
@@ -339,11 +339,11 @@ impl State {
   }
   fn object_by_pos(&self, (x,y): (u16,u16)) -> duckdb::Result<Option<Object>> {
     self.db.query_row(r#"
-      select o.id, o.shape, o.connectors,
+      select o.id, o.shape, o.connectors, o.kind::text
       from   objects as o
       where  (o.x,o.y) = (?1,?2)
       order by o.id
-    "#, params![x,y], |row| Ok(Object::new(row.get(0)?, row.get(1)?, row.get(2)?, (x,y)))).optional()
+    "#, params![x,y], |row| Ok(Object::new(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, (x,y)))).optional()
   }
   fn query_objects_via_statement<T,F>(mut statement: Statement, params: &[&dyn duckdb::ToSql], f :F) -> duckdb::Result<Vec<T>>
   where
@@ -357,15 +357,15 @@ impl State {
   }
   fn objects_by_shape_with_color(&self, shape: i32, color: Option<Color>) -> duckdb::Result<Vec<Object>> {
     State::query_objects_via_statement(
-      self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o where o.shape = ?1 order by o.id")?,
+      self.db.prepare("select o.id, o.shape, o.connectors, o.kind::text, o.x, o.y from objects as o where o.shape = ?1 order by o.id")?,
       params![shape],
-      |row| Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), color))
+      |row| Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, (row.get(4)?,row.get(5)?), color))
     )
   }
   fn objects_by_shape_via_tx_with_color(tx: &duckdb::Transaction, shape: i32, color: Option<Color>) -> duckdb::Result<Vec<Object>> {
-    State::query_objects_via_statement(tx.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o where o.shape = ?1 order by o.id")?,
+    State::query_objects_via_statement(tx.prepare("select o.id, o.shape, o.connectors, o.kind::text, o.x, o.y from objects as o where o.shape = ?1 order by o.id")?,
     params![shape],
-    |row| Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), color)))
+    |row| Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, (row.get(4)?,row.get(5)?), color)))
   }
   fn objects_by_shape_via_tx(tx: &duckdb::Transaction, shape: i32) -> duckdb::Result<Vec<Object>> {
     State::objects_by_shape_via_tx_with_color(tx, shape, None)
@@ -705,15 +705,15 @@ mod tests {
     }
 
     // Helper function that adds an object to the initialized database of state
-    fn add_object(state: &State, shape: i32, conectors: i32, kind: output::Kind, x: u16, y: u16) -> duckdb::Result<usize> { state.db.execute(r#"insert into objects(shape,connectors,kind,x,y) select ?1,?2,?3,?4,?5"#, params![shape,conectors,kind.to_string(),x,y]) }
+    fn add_object(state: &State, shape: i32, conectors: i32, kind: String, x: u16, y: u16) -> duckdb::Result<usize> { state.db.execute(r#"insert into objects(shape,connectors,kind,x,y) select ?1,?2,?3,?4,?5"#, params![shape,conectors,kind,x,y]) }
 
     // Wrapper function to query an object by shape via transaction
     fn object_by_id(state: &State, shape: i32) -> duckdb::Result<Option<Object>> {
       state.db.query_row(r#"
-        select o.id, o.shape, o.connectors, o.x, o.y
+        select o.id, o.shape, o.connectors, o.kind::text, o.x, o.y
         from   objects as o
         where  o.shape = ?1
-      "#, params![shape], |row| Ok(Object::new(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?, row.get(4)?)))).optional() }
+      "#, params![shape], |row| Ok(Object::new(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, (row.get(4)?, row.get(5)?)))).optional() }
 
     #[test]
     // Populate the database with one object {id: 1, shape: 1, pos: (2,3)} and test object_by_id and object_by_pos
@@ -724,9 +724,9 @@ mod tests {
       const Y: u16          = 3;
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      assert_eq!(add_object(&state, SHAPE, CONNECTORS, output::Kind::None, X, Y)?, 1);
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y))));
-      assert_eq!(state.object_by_pos((X,Y))?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y))));
+      assert_eq!(add_object(&state, SHAPE, CONNECTORS, "None".to_string(), X, Y)?, 1);
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y))));
+      assert_eq!(state.object_by_pos((X,Y))?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y))));
       Ok(())
     }
 
@@ -753,7 +753,7 @@ mod tests {
             Ok(StateControlPayload::MoveShape(here_shape,there_shape)) =>  {
               assert_eq!(here_shape.len(), 1);
               assert_eq!(there_shape.len(), 1);
-              assert_eq!((here_shape[0], there_shape[0]), (expected_here, expected_there))
+              assert_eq!((here_shape[0].clone(), there_shape[0].clone()), (expected_here, expected_there))
             },
             Ok(payload)                                            => panic!("Did not receive MoveShape: {:?}", payload),
             Err(e)                                                 => panic!("Failed to receive MoveShape: {}", e)
@@ -783,28 +783,28 @@ mod tests {
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+1));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+2));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+3));
-          assert_received_print_objects(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y), Some(Color::White)));
-         assert_received_shape_movement(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y), None), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
+          assert_received_print_objects(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y), Some(Color::White)));
+         assert_received_shape_movement(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y), None), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
            assert_received_turn_counter(&dummy_recv, 5, 1, false);
-         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X-1,Y+1), Some(Color::White)));
+         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X-1,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+1,INITIAL_CURSOR_POS_Y+4));
            assert_received_turn_counter(&dummy_recv, 5, 2, false);
-         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X-1,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
+         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X-1,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
            assert_received_turn_counter(&dummy_recv, 5, 3, false);
-         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y), Some(Color::White)));
+         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+3));
            assert_received_turn_counter(&dummy_recv, 4, 4, false);
-         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, (X,Y)), Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::White)));
+         assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y)), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
            assert_received_turn_counter(&dummy_recv, 5, 5, false);
-          assert_received_print_objects(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, (X,Y+1), Some(Color::DarkGrey)));
+          assert_received_print_objects(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1), Some(Color::DarkGrey)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+3,INITIAL_CURSOR_POS_Y+4));
       });
 
       state.init_database()?;
-      assert_eq!(add_object(&state, SHAPE, CONNECTORS, output::Kind::None, X, Y)?, 1);
+      assert_eq!(add_object(&state, SHAPE, CONNECTORS, "None".to_string(), X, Y)?, 1);
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X, INITIAL_CURSOR_POS_Y));
       assert_eq!(state.selected_shape, None);
       state.toggle_select_shape()?;
@@ -820,35 +820,35 @@ mod tests {
       state.move_cursor(Direction::Down)?;
       state.toggle_select_shape()?;
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+2, INITIAL_CURSOR_POS_Y+3));
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y))));
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y))));
       assert_eq!(state.selected_shape, Some(1));
       state.move_cursor(Direction::Down)?;
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+2, INITIAL_CURSOR_POS_Y+4));
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y+1))));
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1))));
       assert_eq!(state.selected_shape, Some(1));
       state.move_cursor(Direction::Left)?;
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+1, INITIAL_CURSOR_POS_Y+4));
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X-1,Y+1))));
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X-1,Y+1))));
       assert_eq!(state.selected_shape, Some(1));
       state.move_cursor(Direction::Right)?;
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+2, INITIAL_CURSOR_POS_Y+4));
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y+1))));
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1))));
       assert_eq!(state.selected_shape, Some(1));
       state.move_cursor(Direction::Up)?;
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+2, INITIAL_CURSOR_POS_Y+3));
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y))));
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y))));
       assert_eq!(state.selected_shape, Some(1));
       state.move_cursor(Direction::Down)?;
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+2, INITIAL_CURSOR_POS_Y+4));
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y+1))));
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1))));
       assert_eq!(state.selected_shape, Some(1));
       state.toggle_select_shape()?;
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+2, INITIAL_CURSOR_POS_Y+4));
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y+1))));
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1))));
       assert_eq!(state.selected_shape, None);
       state.move_cursor(Direction::Right)?;
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+3, INITIAL_CURSOR_POS_Y+4));
-      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y+1))));
+      assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1))));
       assert_eq!(state.selected_shape, None);
       if !dummy_thread.is_finished() { thread::sleep(time::Duration::from_secs(WAIT_FOR_DUMMY_THREAD_IN_SECS)); if !dummy_thread.is_finished() { panic!("Thread did not finish after waiting for it for at least {} seconds", WAIT_FOR_DUMMY_THREAD_IN_SECS) } }
       Ok(())
@@ -860,10 +860,10 @@ mod tests {
     fn simple_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, output::Kind::None, 1, 1)?; // ┌
-      add_object(&state, 1, 0b0011, output::Kind::None, 2, 1)?; // ┐
-      add_object(&state, 1, 0b1001, output::Kind::None, 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100, output::Kind::None, 1, 2)?; // └
+      add_object(&state, 1, 0b0110,  "None".to_string(), 1, 1)?; // ┌
+      add_object(&state, 1, 0b0011,  "None".to_string(), 2, 1)?; // ┐
+      add_object(&state, 1, 0b1001,  "None".to_string(), 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100,  "None".to_string(), 1, 2)?; // └
       assert_eq!(state.turn_state()?.1, true);
       Ok(())
     }
@@ -874,10 +874,10 @@ mod tests {
     fn simple_single_shape_incomplete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, output::Kind::None, 2, 1)?; // ┌
-      add_object(&state, 1, 0b0011, output::Kind::None, 1, 1)?; // ┐
-      add_object(&state, 1, 0b1001, output::Kind::None, 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100, output::Kind::None, 1, 2)?; // └
+      add_object(&state, 1, 0b0110,  "None".to_string(), 2, 1)?; // ┌
+      add_object(&state, 1, 0b0011,  "None".to_string(), 1, 1)?; // ┐
+      add_object(&state, 1, 0b1001,  "None".to_string(), 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100,  "None".to_string(), 1, 2)?; // └
       assert_eq!(state.turn_state()?.1, false);
       Ok(())
     }
@@ -888,10 +888,10 @@ mod tests {
     fn simple_two_shape_incomplete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 2, 0b0110, output::Kind::None, 3, 1)?; // ┌
-      add_object(&state, 1, 0b0011, output::Kind::None, 1, 1)?; // ┐
-      add_object(&state, 2, 0b1001, output::Kind::None, 3, 2)?; // ┘
-      add_object(&state, 1, 0b1100, output::Kind::None, 1, 2)?; // └
+      add_object(&state, 2, 0b0110,  "None".to_string(), 3, 1)?; // ┌
+      add_object(&state, 1, 0b0011,  "None".to_string(), 1, 1)?; // ┐
+      add_object(&state, 2, 0b1001,  "None".to_string(), 3, 2)?; // ┘
+      add_object(&state, 1, 0b1100,  "None".to_string(), 1, 2)?; // └
       assert_eq!(state.turn_state()?.1, false);
       Ok(())
     }
@@ -902,14 +902,14 @@ mod tests {
     fn simple_two_shape_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, output::Kind::None, 1, 1)?; // ┌
-      add_object(&state, 1, 0b0011, output::Kind::None, 2, 1)?; // ┐
-      add_object(&state, 1, 0b1001, output::Kind::None, 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100, output::Kind::None, 1, 2)?; // └
-      add_object(&state, 2, 0b0110, output::Kind::None, 4, 1)?; // ┌
-      add_object(&state, 2, 0b0011, output::Kind::None, 5, 1)?; // ┐
-      add_object(&state, 2, 0b1001, output::Kind::None, 5, 2)?; // ┘
-      add_object(&state, 2, 0b1100, output::Kind::None, 4, 2)?; // └
+      add_object(&state, 1, 0b0110,  "None".to_string(), 1, 1)?; // ┌
+      add_object(&state, 1, 0b0011,  "None".to_string(), 2, 1)?; // ┐
+      add_object(&state, 1, 0b1001,  "None".to_string(), 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100,  "None".to_string(), 1, 2)?; // └
+      add_object(&state, 2, 0b0110,  "None".to_string(), 4, 1)?; // ┌
+      add_object(&state, 2, 0b0011,  "None".to_string(), 5, 1)?; // ┐
+      add_object(&state, 2, 0b1001,  "None".to_string(), 5, 2)?; // ┘
+      add_object(&state, 2, 0b1100,  "None".to_string(), 4, 2)?; // └
       assert_eq!(state.turn_state()?.1, true);
       Ok(())
     }

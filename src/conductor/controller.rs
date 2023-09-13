@@ -3,6 +3,7 @@ mod input;
 mod output;
 mod state;
 
+use std::str::FromStr;
 use std::sync::mpsc::SendError;
 use std::time;
 use std::{thread::{self, JoinHandle}, sync::mpsc::{SyncSender, Receiver, TryRecvError}};
@@ -11,7 +12,7 @@ use crossterm::event::{KeyEvent, KeyCode, KeyModifiers, KeyEventKind, KeyEventSt
 use clap::Parser;
 use crossterm::style::Color;
 use input::Input;
-use output::{Literal, Char, Output, Kind};
+use output::{Literal, Char, Output};
 use state::State;
 use log::error;
 
@@ -123,7 +124,12 @@ impl Controller {
       },
       Ok(state::StateControlPayload::PrintObjects(objects)) => {
         send_handler(exec_state, self.control_output_send.send(output::ControlOutputPayload::PrintChars(
-          objects.into_iter().map(|obj| Char::new(Controller::connectors_to_literal(obj.connectors(), Kind::None), obj.pos(), obj.color())).collect()
+          objects.into_iter()
+            .map(|obj| Char::new(
+              Controller::connectors_to_literal(obj.connectors(),output::Kind::from_str(obj.kind().as_str()).unwrap_or(output::Kind::None)),
+              obj.pos(),
+              obj.color()))
+            .collect()
         )), "Error sending chars to output")
       },
       Ok(state::StateControlPayload::SetCursorPosition((x,y))) => {
@@ -134,7 +140,10 @@ impl Controller {
           here_shape.into_iter()
             .map(|obj| Char::new(Literal::Empty, obj.pos(), None))
             .chain(there_shape.into_iter()
-                     .map(|obj| Char::new(Controller::connectors_to_literal(obj.connectors(), Kind::None), obj.pos(), obj.color())))
+                     .map(|obj| Char::new(
+                      Controller::connectors_to_literal(obj.connectors(), output::Kind::from_str(obj.kind().as_str()).unwrap_or(output::Kind::None)),
+                      obj.pos(),
+                      obj.color())))
             .collect()
         })), "Error moving object via output")
       },

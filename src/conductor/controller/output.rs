@@ -3,6 +3,7 @@ use crossterm::style::{Print, Color, SetForegroundColor, ResetColor};
 use crossterm::terminal;
 use std::fmt::Display;
 use std::io::{Stdout, Write, self, stdout};
+use std::str::FromStr;
 use std::sync::mpsc::{Receiver, Sender, self, SyncSender};
 use std::time;
 
@@ -23,6 +24,19 @@ impl ToString for Kind {
       Kind::None => "None".to_string(),
       Kind::Wide => "Wide".to_string(),
       Kind::Door => "Door".to_string()
+    }
+  }
+}
+
+impl FromStr for Kind {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "None" => Ok(Kind::None),
+      "Wide" => Ok(Kind::Wide),
+      "Door" => Ok(Kind::Door),
+      _      => Err("Failed to parse string to type `Kind`".to_string())
     }
   }
 }

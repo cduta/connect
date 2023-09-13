@@ -6,6 +6,7 @@ use zip_archive::Archiver;
 use crate::common;
 
 use super::error;
+use super::output;
 
 type MoveObjectResult = Result<Option<(Vec<Object>,Vec<Object>)>, error::IOError>;
 
@@ -73,31 +74,99 @@ impl State {
   /// The database is initialized with a sequence `object_seq_id` and table `objects`
   fn init_database(&self) -> duckdb::Result<()> {
     self.db.execute_batch(r#"
+    -- Object type enum
+    create type kind as enum ('None','Wide','Door','Volatile');
+
     -- Is `x` ∈ { 0,…,65534 }?
     create macro is_inbound(x) as x between 0 and 65534;
 
     -- Is `x` ∈ { 0,…,15 }?
-    create macro is_connectors(x) as x between 0 and 15;
+    create macro is_connectors(x) as x between 0 and 240;
 
     -- Map character `c` to the corresponding connector number
     create macro char_to_connectors(c) as
       case
-        when c in ('█','◊')                                                                     then 0
-        when c in ('╴','╸')                                                                     then 1
-        when c in ('╷','╻')                                                                     then 2
-        when c in ('┐','┒','┑','┓','╖','╕','╗')                                                 then 3
-        when c in ('╶','╺')                                                                     then 4
-        when c in ('─','╼','╾','━','═')                                                         then 5
-        when c in ('┌','┍','┎','┏','╒','╓','╔')                                                 then 6
-        when c in ('┬','┮','┰','┭','┲','┱','┯','┳','╥','╤','╦')                                 then 7
-        when c in ('╵','╹')                                                                     then 8
-        when c in ('┘','┚','┙','┛','╜','╛','╝')                                                 then 9
-        when c in ('│','╿','╽','┃','║')                                                         then 10
-        when c in ('┤','┦','┧','┥','┩','┨','┪','┫','╢','╡','╣')                                 then 11
-        when c in ('└','┖','┕','┗','╙','╘','╚')                                                 then 12
-        when c in ('┴','┸','┶','┵','┺','┷','┹','┻','╨','╧','╩')                                 then 13
-        when c in ('├','┞','┝','┟','┡','┢','┠','┣','╞','╟','╠')                                 then 14
-        when c in ('┼','╀','┾','╁','┽','╄','╂','╃','╆','┿','╃','╊','╇','╉','╈','╋','╫','╪','╬') then 15
+        when c in ('█','◊') then   0
+        when c =   '╴'      then   1
+        when c =   '╸'      then ( 1 << 4)
+        when c =   '╷'      then   2
+        when c =   '╻'      then ( 2 << 4)
+        when c =   '┐'      then   3
+        when c in ('┒','╖') then ( 2 << 4) + 1
+        when c in ('┑','╕') then ( 1 << 4) + 2
+        when c in ('┓','╗') then ( 3 << 4)
+        when c =   '╶'      then   4
+        when c =   '╺'      then ( 4 << 4)
+        when c =   '─'      then   5
+        when c =   '╼'      then ( 4 << 4) + 1
+        when c =   '╾'      then ( 1 << 4) + 4
+        when c in ('━''═')  then ( 5 << 4)
+        when c =   '┌'      then   6
+        when c in ('┍','╒') then ( 4 << 4) + 2
+        when c in ('┎','╓') then ( 2 << 4) + 4
+        when c in ('┏','╔') then ( 6 << 4)
+        when c =   '┬'      then   7
+        when c =   '┮'      then ( 4 << 4) + 3
+        when c =   '┭'      then ( 1 << 4) + 6
+        when c =   '┲'      then ( 6 << 4) + 1
+        when c =   '┱'      then ( 3 << 4) + 4
+        when c in ('┰','╥') then ( 2 << 4) + 5
+        when c in ('┯','╤') then ( 5 << 4) + 2
+        when c in ('┳','╦') then ( 7 << 4)
+        when c =   '╵'      then   8
+        when c =   '╹'      then ( 8 << 4)
+        when c =   '┘'      then   9
+        when c in ('┚','╜') then ( 8 << 4) + 1
+        when c in ('┙','╛') then ( 1 << 4) + 8
+        when c in ('┛','╝') then ( 9 << 4)
+        when c =   '│'      then  10
+        when c =   '╿'      then ( 8 << 4) + 2
+        when c =   '╽'      then ( 2 << 4) + 8
+        when c in ('┃','║') then (10 << 4)
+        when c =   '┤'      then  11
+        when c =   '┦'      then ( 8 << 4) + 3
+        when c =   '┧'      then ( 2 << 4) + 9
+        when c =   '┩'      then ( 9 << 4) + 2
+        when c =   '┪'      then ( 3 << 4) + 8
+        when c in ('┥','╡') then (10 << 4) + 1
+        when c in ('┨','╡') then ( 1 << 4) + 10
+        when c in ('┫','╣') then (11 << 4)
+        when c =   '└'      then  12
+        when c in ('┖','╙') then ( 8 << 4) + 4
+        when c in ('┕','╘') then ( 4 << 4) + 8
+        when c in ('┗','╚') then (12 << 4)
+        when c =   '┴'      then  13
+        when c =   '┶'      then ( 4 << 4) + 9
+        when c =   '┵'      then ( 1 << 4) + 12
+        when c =   '┺'      then (12 << 4) + 1
+        when c =   '┹'      then ( 9 << 4) + 4
+        when c in ('┸','╨') then ( 8 << 4) + 5
+        when c in ('┷','╧') then ( 5 << 4) + 8
+        when c in ('┻','╩') then (13 << 4)
+        when c =   '├'      then  14
+        when c =   '┞'      then ( 8 << 4) + 6
+        when c =   '┟'      then ( 2 << 4) + 12
+        when c =   '┡'      then (12 << 4) + 2
+        when c =   '┢'      then ( 6 << 4) + 8
+        when c in ('┝','╞') then ( 4 << 4) + 9
+        when c in ('┠','╟') then ( 9 << 4) + 4
+        when c in ('┣','╠') then (14 << 4)
+        when c =   '┼'      then  15
+        when c =   '╀'      then ( 8 << 4) + 7
+        when c =   '╈'      then ( 7 << 4) + 8
+        when c =   '┾'      then ( 4 << 4) + 11
+        when c =   '╉'      then (11 << 4) + 4
+        when c =   '╁'      then ( 2 << 4) + 13
+        when c =   '╇'      then (13 << 4) + 2
+        when c =   '┽'      then (14 << 4) + 1
+        when c =   '╊'      then ( 1 << 4) + 14
+        when c =   '╅'      then ( 3 << 4) + 12
+        when c =   '╄'      then (12 << 4) + 3
+        when c =   '╃'      then ( 9 << 4) + 6
+        when c =   '╆'      then ( 6 << 4) + 9
+        when c =  ('╂','╫') then (10 << 4) + 5
+        when c =  ('┿','╪') then ( 5 << 4) + 10
+        when c in ('╋','╬') then (15 << 4)
       end;
 
     -- Map character `c` to enum `type`
@@ -106,10 +175,10 @@ impl State {
         when c = '◊'                                                                                                                    then 'Volatile'
         when c in ('╸','╻','┒','┑','┓','╺','╼','╾','━','┍','┎','┏','┮','┰','┭','┲','┱','┯','┳','╹','┚',
                    '┙','┛','╿','╽','┃','┦','┧','┥','┩','┨','┪','┫','┖','┕','┗','┸','┶','┵','┺','┷','┹',
-                   '┻','┞','┝','┟','┡','┢','┠','┣','╀','┾','╁','┽','╄','╂','╃','╆','┿','╃','╊','╇','╉','╈','╋')                         then 'Wide'
+                   '┻','┞','┝','┟','┡','┢','┠','┣','╀','┾','╁','┽','╄','╂','╃','╆','┿','╅','╊','╇','╉','╈','╋')                         then 'Wide'
         when c in ('╖','╕','╗','═','╒','╓','╔','╥','╤','╦','╜','╛','╝','║','╢','╡','╣','╙','╘','╚','╨','╧','╩','╞','╟','╠','╫','╪','╬') then 'Door'
         else 'None'
-      end
+      end :: kind;
 
     -- Returns true, if this and the other object at position (x,y) and (ox,oy) are vertically or horizontally adjacend and both connectors c and oc align
     create macro "connects?"(c,x,y,oc,ox,oy) as

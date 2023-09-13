@@ -11,7 +11,7 @@ use crossterm::event::{KeyEvent, KeyCode, KeyModifiers, KeyEventKind, KeyEventSt
 use clap::Parser;
 use crossterm::style::Color;
 use input::Input;
-use output::{Literal, Char, Output, Feat};
+use output::{Literal, Char, Output, Kind};
 use state::State;
 use log::error;
 
@@ -85,27 +85,27 @@ impl Controller {
     Ok(ExecutionState::Run)
   }
 
-  /// 
+  ///
   #[inline]
   fn connectors_to_literal(connectors: i32) -> output::Literal {
     match connectors {
       //URDL
       0b0000 => output::Literal::Wall,
-      0b0001 => output::Literal::L(Feat::None),
-      0b0010 => output::Literal::D(Feat::None),
-      0b0011 => output::Literal::DL(Feat::None),
-      0b0100 => output::Literal::R(Feat::None),
-      0b0101 => output::Literal::RL(Feat::None),
-      0b0110 => output::Literal::RD(Feat::None),
-      0b0111 => output::Literal::RDL(Feat::None),
-      0b1000 => output::Literal::U(Feat::None),
-      0b1001 => output::Literal::UL(Feat::None),
-      0b1010 => output::Literal::UD(Feat::None),
-      0b1011 => output::Literal::UDL(Feat::None),
-      0b1100 => output::Literal::UR(Feat::None),
-      0b1101 => output::Literal::URL(Feat::None),
-      0b1110 => output::Literal::URD(Feat::None),
-      0b1111 => output::Literal::URDL(Feat::None),
+      0b0001 => output::Literal::L(Kind::None),
+      0b0010 => output::Literal::D(Kind::None),
+      0b0011 => output::Literal::DL(Kind::None),
+      0b0100 => output::Literal::R(Kind::None),
+      0b0101 => output::Literal::RL(Kind::None),
+      0b0110 => output::Literal::RD(Kind::None),
+      0b0111 => output::Literal::RDL(Kind::None),
+      0b1000 => output::Literal::U(Kind::None),
+      0b1001 => output::Literal::UL(Kind::None),
+      0b1010 => output::Literal::UD(Kind::None),
+      0b1011 => output::Literal::UDL(Kind::None),
+      0b1100 => output::Literal::UR(Kind::None),
+      0b1101 => output::Literal::URL(Kind::None),
+      0b1110 => output::Literal::URD(Kind::None),
+      0b1111 => output::Literal::URDL(Kind::None),
            _ => output::Literal::Unknown
     }
   }
@@ -230,7 +230,7 @@ pub fn run() {
   let mut quick_shutdowns = 0;
   let mut now = time::Instant::now();
   // Make sure to stop execution, if too many shutdowns happen in quick succession
-  loop { 
+  loop {
     match controller.start() {
       ExecutionState::Quit    => { controller.shutdown(); break },
       ExecutionState::Restart => {
@@ -247,9 +247,9 @@ pub fn run() {
         // If less then QUICK_SHUTDOWN_IN_SECS time elapsed since the last shut down
         if now.elapsed() < time::Duration::from_secs(QUICK_SHUTDOWN_IN_SECS) { quick_shutdowns += 1; } else { quick_shutdowns = 0; }
         controller.shutdown();
-        if quick_shutdowns >= TOO_MANY_QUICK_SHUTDOWNS { 
+        if quick_shutdowns >= TOO_MANY_QUICK_SHUTDOWNS {
           error!("Execution stopped: Too many shutdowns ({}) in succession", quick_shutdowns);
-          break 
+          break
         }
         controller = match Controller::new(&args) {
           Ok(controller) => controller,

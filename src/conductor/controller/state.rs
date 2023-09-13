@@ -436,6 +436,20 @@ impl State {
                                              and    "connects?"(_o.connectors, _o.kind, _o.x, _o.y, o.connectors, o.kind, o.x, o.y)))
           "#, params![shape])? > 0 {
             // If shape is completed and has any doors, open them.
+            if tx.query_row(r#"
+              select "is complete?"(o.connectors,o.kind,o.x,o.y)
+              from   objects as o
+              where  o.shape = ?1
+              and    o.kind = 'Door'
+              limit 1
+            "#, params![shape], |row| row.get(0))? {
+              tx.execute(r#"
+                delete from objects
+                where  shape = ?1
+                and    o.kind = 'Door'
+                and    (o.connectors & 240) > 0
+              "#, params![shape])?;
+            }
           }
           return Ok(Some((here_shape, State::objects_by_shape_via_tx_with_color(tx, shape, Some(Color::White))?)));
         }
@@ -874,11 +888,11 @@ mod tests {
     fn simple_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110,  "None".to_string(), 1, 1)?; // ┌
-      add_object(&state, 1, 0b0011,  "None".to_string(), 2, 1)?; // ┐
-      add_object(&state, 1, 0b1001,  "None".to_string(), 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100,  "None".to_string(), 1, 2)?; // └
-      assert_eq!(state.turn_state()?.1, true);
+      add_object(&state, 1, 0b0110, "None".to_string(), 1, 1)?; // ┌
+      add_object(&state, 1, 0b0011, "None".to_string(), 2, 1)?; // ┐
+      add_object(&state, 1, 0b1001, "None".to_string(), 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100, "None".to_string(), 1, 2)?; // └
+      assert!(state.turn_state()?.1);
       Ok(())
     }
 
@@ -888,11 +902,11 @@ mod tests {
     fn simple_single_shape_incomplete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110,  "None".to_string(), 2, 1)?; // ┌
-      add_object(&state, 1, 0b0011,  "None".to_string(), 1, 1)?; // ┐
-      add_object(&state, 1, 0b1001,  "None".to_string(), 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100,  "None".to_string(), 1, 2)?; // └
-      assert_eq!(state.turn_state()?.1, false);
+      add_object(&state, 1, 0b0110, "None".to_string(), 2, 1)?; // ┌
+      add_object(&state, 1, 0b0011, "None".to_string(), 1, 1)?; // ┐
+      add_object(&state, 1, 0b1001, "None".to_string(), 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100, "None".to_string(), 1, 2)?; // └
+      assert!(!state.turn_state()?.1);
       Ok(())
     }
 
@@ -902,11 +916,11 @@ mod tests {
     fn simple_two_shape_incomplete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 2, 0b0110,  "None".to_string(), 3, 1)?; // ┌
-      add_object(&state, 1, 0b0011,  "None".to_string(), 1, 1)?; // ┐
-      add_object(&state, 2, 0b1001,  "None".to_string(), 3, 2)?; // ┘
-      add_object(&state, 1, 0b1100,  "None".to_string(), 1, 2)?; // └
-      assert_eq!(state.turn_state()?.1, false);
+      add_object(&state, 2, 0b0110, "None".to_string(), 3, 1)?; // ┌
+      add_object(&state, 1, 0b0011, "None".to_string(), 1, 1)?; // ┐
+      add_object(&state, 2, 0b1001, "None".to_string(), 3, 2)?; // ┘
+      add_object(&state, 1, 0b1100, "None".to_string(), 1, 2)?; // └
+      assert!(!state.turn_state()?.1);
       Ok(())
     }
 
@@ -916,15 +930,52 @@ mod tests {
     fn simple_two_shape_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110,  "None".to_string(), 1, 1)?; // ┌
-      add_object(&state, 1, 0b0011,  "None".to_string(), 2, 1)?; // ┐
-      add_object(&state, 1, 0b1001,  "None".to_string(), 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100,  "None".to_string(), 1, 2)?; // └
-      add_object(&state, 2, 0b0110,  "None".to_string(), 4, 1)?; // ┌
-      add_object(&state, 2, 0b0011,  "None".to_string(), 5, 1)?; // ┐
-      add_object(&state, 2, 0b1001,  "None".to_string(), 5, 2)?; // ┘
-      add_object(&state, 2, 0b1100,  "None".to_string(), 4, 2)?; // └
-      assert_eq!(state.turn_state()?.1, true);
+      add_object(&state, 1, 0b0110, "None".to_string(), 1, 1)?; // ┌
+      add_object(&state, 1, 0b0011, "None".to_string(), 2, 1)?; // ┐
+      add_object(&state, 1, 0b1001, "None".to_string(), 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100, "None".to_string(), 1, 2)?; // └
+      add_object(&state, 2, 0b0110, "None".to_string(), 4, 1)?; // ┌
+      add_object(&state, 2, 0b0011, "None".to_string(), 5, 1)?; // ┐
+      add_object(&state, 2, 0b1001, "None".to_string(), 5, 2)?; // ┘
+      add_object(&state, 2, 0b1100, "None".to_string(), 4, 2)?; // └
+      assert!(state.turn_state()?.1);
+      Ok(())
+    }
+
+    #[test]
+    /// ┌┐═┌┐    ┌┐ ┌┐    ┌┐ ┌┐
+    /// │╞ ╡│ -> │╞═╡│ -> ││ ││
+    /// └┘ └┘    └┘ └┘    └┘ └┘
+    fn shapes_with_doors() -> error::IOResult {
+      let (state, _, _) = State::new()?;
+      state.init_database()?;
+      add_object(&state, 1, 0b00000110, "None".to_string(), 1, 1)?; // ┌
+      add_object(&state, 1, 0b00000011, "None".to_string(), 2, 1)?; // ┐
+      add_object(&state, 1, 0b00001001, "None".to_string(), 2, 3)?; // ┘
+      add_object(&state, 1, 0b00001100, "None".to_string(), 1, 3)?; // └
+      add_object(&state, 1, 0b00001010, "None".to_string(), 1, 2)?; // |
+      add_object(&state, 1, 0b01001010, "Door".to_string(), 1, 2)?; // ╞
+
+      add_object(&state, 2, 0b01010000, "Door".to_string(), 2, 1)?; // ═
+
+      add_object(&state, 3, 0b00000110, "None".to_string(), 3, 1)?; // ┌
+      add_object(&state, 3, 0b00000011, "None".to_string(), 4, 1)?; // ┐
+      add_object(&state, 3, 0b00001001, "None".to_string(), 4, 3)?; // ┘
+      add_object(&state, 3, 0b00001100, "None".to_string(), 3, 3)?; // └
+      add_object(&state, 3, 0b00001010, "None".to_string(), 4, 2)?; // |
+      add_object(&state, 3, 0b00011010, "Door".to_string(), 3, 2)?; // ╡
+
+      let mut db = state.db.try_clone()?;
+      let tx     = db.transaction()?;
+      State::move_shape(&tx, 2, (0,1), (10,10))?;
+      tx.commit()?;
+
+      assert_eq!(state.object_by_pos((2,2))?, None); // Removed
+      assert_eq!(state.object_by_pos((1,2))?, Some(Object::new( 6, 1, 0b00001010, "None".to_string(), (1,2)))); // ╞ → |
+      assert_eq!(state.object_by_pos((3,2))?, Some(Object::new(13, 1, 0b00001010, "None".to_string(), (1,2)))); // ╡ → |
+      assert_eq!(state.db.query_row("select count(distinct o.shape) from objects as o", params![], |row| row.get(0)), Ok(2));
+      assert!(state.turn_state()?.1);
+
       Ok(())
     }
 }

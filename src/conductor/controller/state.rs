@@ -422,7 +422,8 @@ impl State {
             where shape = ?3
         "#, params![Δx,Δy,shape])?;
         if tx.query_row(r#"select 1 from objects as o where o.shape = ?1 limit 1"#, params![shape], |row| row.get(0)).optional().is_ok_and(|o_row: Option<i32>| o_row.is_some()) {
-          // Merge shapes, if any are adjacent and then do things, if shapes have been merged.
+          // Merge shapes, if any are adjacent and then do things
+          // If number of merged objects is larger than 0, check for doors
           if tx.execute(r#"
             update objects
               set   shape = ?1

@@ -181,15 +181,15 @@ impl State {
       end :: kind;
 
     -- Returns true, if this and the other object at position (x,y) and (ox,oy) are vertically or horizontally adjacend and both connectors c and oc align
-    create macro "connects?"(c,x,y,oc,ox,oy) as
-         ((c & 128) = 128 and (oc &  32) =  32 and (x,y) = (ox  ,oy+1))  -- Selected Up    Special Connector + Potential Down  Special Connector
-      or ((c &  64) =  64 and (oc &  16) =  16 and (x,y) = (ox-1,oy  ))  -- Selected Right Special Connector + Potential Left  Special Connector
-      or ((c &  32) =  32 and (oc & 128) = 128 and (x,y) = (ox  ,oy-1))  -- Selected Down  Special Connector + Potential Up    Special Connector
-      or ((c &  16) =  16 and (oc &  64) =  64 and (x,y) = (ox+1,oy  ))  -- Selected Left  Special Connector + Potential Right Special Connector
-      or ((c &   8) =   8 and (oc &   2) =   2 and (x,y) = (ox  ,oy+1))  -- Selected Up    Connector         + Potential Down  Connector
-      or ((c &   4) =   4 and (oc &   1) =   1 and (x,y) = (ox-1,oy  ))  -- Selected Right Connector         + Potential Left  Connector
-      or ((c &   2) =   2 and (oc &   8) =   8 and (x,y) = (ox  ,oy-1))  -- Selected Down  Connector         + Potential Up    Connector
-      or ((c &   1) =   1 and (oc &   4) =   4 and (x,y) = (ox+1,oy  )); -- Selected Left  Connector         + Potential Right Connector
+    create macro "connects?"(c,k,x,y,oc,ok,ox,oy) as
+         ((c & 128) = 128 and (oc &  32) =  32 and k = ok and (x,y) = (ox  ,oy+1))  -- Selected Up    Special Connector + Potential Down  Special Connector
+      or ((c &  64) =  64 and (oc &  16) =  16 and k = ok and (x,y) = (ox-1,oy  ))  -- Selected Right Special Connector + Potential Left  Special Connector
+      or ((c &  32) =  32 and (oc & 128) = 128 and k = ok and (x,y) = (ox  ,oy-1))  -- Selected Down  Special Connector + Potential Up    Special Connector
+      or ((c &  16) =  16 and (oc &  64) =  64 and k = ok and (x,y) = (ox+1,oy  ))  -- Selected Left  Special Connector + Potential Right Special Connector
+      or ((c &   8) =   8 and (oc &   2) =   2            and (x,y) = (ox  ,oy+1))  -- Selected Up    Connector         + Potential Down  Connector
+      or ((c &   4) =   4 and (oc &   1) =   1            and (x,y) = (ox-1,oy  ))  -- Selected Right Connector         + Potential Left  Connector
+      or ((c &   2) =   2 and (oc &   8) =   8            and (x,y) = (ox  ,oy-1))  -- Selected Down  Connector         + Potential Up    Connector
+      or ((c &   1) =   1 and (oc &   4) =   4            and (x,y) = (ox+1,oy  )); -- Selected Left  Connector         + Potential Right Connector
 
     create sequence object_seq_id;
     create sequence shape_seq_id;
@@ -271,7 +271,7 @@ impl State {
           union
         select fs.shape, po.*
         from   form_shape as fs, parsed_objects as po
-        where  "connects?"(fs.connectors, fs.x, fs.y, po.connectors, po.x, po.y)
+        where  "connects?"(fs.connectors, fs.kind, fs.x, fs.y, po.connectors, po.kind, po.x, po.y)
       )
       select fs.*
       from   form_shape as fs
@@ -422,7 +422,7 @@ impl State {
                               and    exists (select 1
                                              from   objects as _o -- Selected shape
                                              where  _o.shape = ?1
-                                             and    "connects?"(_o.connectors, _o.x, _o.y, o.connectors, o.x, o.y)))
+                                             and    "connects?"(_o.connectors, _o.kind, _o.x, _o.y, o.connectors, o.kind, o.x, o.y)))
           "#, params![shape])?;
           return Ok(Some((here_shape, State::objects_by_shape_via_tx_with_color(tx, shape, Some(Color::White))?)));
         }
@@ -438,14 +438,14 @@ impl State {
              not exists (select 1
                          from   objects as o
                          where  o.connectors > 0
-                         and    (o.connectors & 128) = 128 and not exists (select 1 from objects as _o where (_o.connectors &  32) =  32 and (o.x,o.y) = (_o.x  ,_o.y+1))
-                         or     (o.connectors &  64) =  64 and not exists (select 1 from objects as _o where (_o.connectors &  16) =  16 and (o.x,o.y) = (_o.x-1,_o.y  ))
-                         or     (o.connectors &  32) =  32 and not exists (select 1 from objects as _o where (_o.connectors & 128) = 128 and (o.x,o.y) = (_o.x  ,_o.y-1))
-                         or     (o.connectors &  16) =  16 and not exists (select 1 from objects as _o where (_o.connectors &  64) =  64 and (o.x,o.y) = (_o.x+1,_o.y  ))
-                         or     (o.connectors &   8) =   8 and not exists (select 1 from objects as _o where (_o.connectors &   2) =   2 and (o.x,o.y) = (_o.x  ,_o.y+1))
-                         or     (o.connectors &   4) =   4 and not exists (select 1 from objects as _o where (_o.connectors &   1) =   1 and (o.x,o.y) = (_o.x-1,_o.y  ))
-                         or     (o.connectors &   2) =   2 and not exists (select 1 from objects as _o where (_o.connectors &   8) =   8 and (o.x,o.y) = (_o.x  ,_o.y-1))
-                         or     (o.connectors &   1) =   1 and not exists (select 1 from objects as _o where (_o.connectors &   4) =   4 and (o.x,o.y) = (_o.x+1,_o.y  ))) as is_complete
+                         and    (o.connectors & 128) = 128 and not exists (select 1 from objects as _o where (_o.connectors &  32) =  32 and o.kind = _o.kind and (o.x,o.y) = (_o.x  ,_o.y+1))
+                         or     (o.connectors &  64) =  64 and not exists (select 1 from objects as _o where (_o.connectors &  16) =  16 and o.kind = _o.kind and (o.x,o.y) = (_o.x-1,_o.y  ))
+                         or     (o.connectors &  32) =  32 and not exists (select 1 from objects as _o where (_o.connectors & 128) = 128 and o.kind = _o.kind and (o.x,o.y) = (_o.x  ,_o.y-1))
+                         or     (o.connectors &  16) =  16 and not exists (select 1 from objects as _o where (_o.connectors &  64) =  64 and o.kind = _o.kind and (o.x,o.y) = (_o.x+1,_o.y  ))
+                         or     (o.connectors &   8) =   8 and not exists (select 1 from objects as _o where (_o.connectors &   2) =   2                      and (o.x,o.y) = (_o.x  ,_o.y+1))
+                         or     (o.connectors &   4) =   4 and not exists (select 1 from objects as _o where (_o.connectors &   1) =   1                      and (o.x,o.y) = (_o.x-1,_o.y  ))
+                         or     (o.connectors &   2) =   2 and not exists (select 1 from objects as _o where (_o.connectors &   8) =   8                      and (o.x,o.y) = (_o.x  ,_o.y-1))
+                         or     (o.connectors &   1) =   1 and not exists (select 1 from objects as _o where (_o.connectors &   4) =   4                      and (o.x,o.y) = (_o.x+1,_o.y  ))) as is_complete
     "#, params![], |row| Ok((row.get(0)?,row.get(1)?)))
   }
 

@@ -87,27 +87,8 @@ impl Controller {
 
   ///
   #[inline]
-  fn connectors_to_literal(connectors: i32) -> output::Literal {
-    match connectors {
-      //URDL
-      0b0000 => output::Literal::Wall,
-      0b0001 => output::Literal::L(Kind::None),
-      0b0010 => output::Literal::D(Kind::None),
-      0b0011 => output::Literal::DL(Kind::None),
-      0b0100 => output::Literal::R(Kind::None),
-      0b0101 => output::Literal::RL(Kind::None),
-      0b0110 => output::Literal::RD(Kind::None),
-      0b0111 => output::Literal::RDL(Kind::None),
-      0b1000 => output::Literal::U(Kind::None),
-      0b1001 => output::Literal::UL(Kind::None),
-      0b1010 => output::Literal::UD(Kind::None),
-      0b1011 => output::Literal::UDL(Kind::None),
-      0b1100 => output::Literal::UR(Kind::None),
-      0b1101 => output::Literal::URL(Kind::None),
-      0b1110 => output::Literal::URD(Kind::None),
-      0b1111 => output::Literal::URDL(Kind::None),
-           _ => output::Literal::Unknown
-    }
+  fn connectors_to_literal(connectors: i32, kind: output::Kind) -> output::Literal {
+    if connectors == 0 { output::Literal::Wall } else  { output::Literal::Object(connectors, kind) }
   }
 
   /// Determine the next exeuction state based on payloads sent by child processes
@@ -142,7 +123,7 @@ impl Controller {
       },
       Ok(state::StateControlPayload::PrintObjects(objects)) => {
         send_handler(exec_state, self.control_output_send.send(output::ControlOutputPayload::PrintChars(
-          objects.into_iter().map(|obj| Char::new(Controller::connectors_to_literal(obj.connectors()), obj.pos(), obj.color())).collect()
+          objects.into_iter().map(|obj| Char::new(Controller::connectors_to_literal(obj.connectors(), Kind::None), obj.pos(), obj.color())).collect()
         )), "Error sending chars to output")
       },
       Ok(state::StateControlPayload::SetCursorPosition((x,y))) => {
@@ -153,7 +134,7 @@ impl Controller {
           here_shape.into_iter()
             .map(|obj| Char::new(Literal::Empty, obj.pos(), None))
             .chain(there_shape.into_iter()
-                     .map(|obj| Char::new(Controller::connectors_to_literal(obj.connectors()), obj.pos(), obj.color())))
+                     .map(|obj| Char::new(Controller::connectors_to_literal(obj.connectors(), Kind::None), obj.pos(), obj.color())))
             .collect()
         })), "Error moving object via output")
       },

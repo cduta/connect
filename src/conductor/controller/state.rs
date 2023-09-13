@@ -437,11 +437,10 @@ impl State {
           "#, params![shape])? > 0 {
             // If shape is completed and has any doors, open them.
             if tx.query_row(r#"
-              select "is complete?"(o.connectors,o.kind,o.x,o.y)
-              from   objects as o
-              where  o.shape = ?1
-              and    o.kind = 'Door'
-              limit 1
+              select exists (select "is complete?"(o.connectors,o.kind,o.x,o.y)
+                             from   objects as o
+                             where  o.shape = ?1
+                             and    o.kind = 'Door')
             "#, params![shape], |row| row.get(0))? {
               // Open all doors
               tx.execute(r#"
@@ -472,7 +471,7 @@ impl State {
   fn turn_state(&self) -> Result<(i32,bool), duckdb::Error> {
     self.db.query_row(r#"
       select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0) as turn,
-             (select "is complete?"(o.connectors,o.kind,o.x,o.y) as is_complete
+             (select bool_and("is complete?"(o.connectors,o.kind,o.x,o.y)) as is_complete
               from   objects as o
               where  o.connectors > 0)
     "#, params![], |row| Ok((row.get(0)?,row.get(1)?)))

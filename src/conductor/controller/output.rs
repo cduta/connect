@@ -19,14 +19,14 @@ pub enum Feat { None, Wide(i32), Door(i32)}
 
 #[allow(clippy::upper_case_acronyms,dead_code)]
 #[derive(PartialEq, Eq)]
-pub enum Literal { Unknown,Empty,Wall,Explosive,U(Feat),R(Feat),D(Feat),L(Feat),UR(Feat),RD(Feat),DL(Feat),UL(Feat),UD(Feat),RL(Feat),URD(Feat),RDL(Feat),UDL(Feat),URL(Feat),URDL(Feat),String(String) }
+pub enum Literal { Unknown,Empty,Wall,Volatile,U(Feat),R(Feat),D(Feat),L(Feat),UR(Feat),RD(Feat),DL(Feat),UL(Feat),UD(Feat),RL(Feat),URD(Feat),RDL(Feat),UDL(Feat),URL(Feat),URDL(Feat),String(String) }
 
 impl Display for Literal {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {  
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Literal::Empty                    => write!(f, " "),
       Literal::Wall                     => write!(f, "█"),
-      Literal::Explosive                => write!(f, "◊"),
+      Literal::Volatile                 => write!(f, "◊"),
       Literal::U(Feat::None)            => write!(f, "╵"),
       Literal::U(Feat::Wide(0b1000))    => write!(f, "╹"),
       Literal::R(Feat::None)            => write!(f, "╶"),
@@ -41,26 +41,26 @@ impl Display for Literal {
       Literal::UR(Feat::Wide(0b1100))   => write!(f, "┗"),
       Literal::UR(Feat::Door(0b1000))   => write!(f, "╙"),
       Literal::UR(Feat::Door(0b0100))   => write!(f, "╘"),
-      Literal::UR(Feat::Door(0b1100))   => write!(f, "╚"), 	 	 
+      Literal::UR(Feat::Door(0b1100))   => write!(f, "╚"),
       Literal::RD(Feat::None)           => write!(f, "┌"),
       Literal::RD(Feat::Wide(0b0100))   => write!(f, "┍"),
       Literal::RD(Feat::Wide(0b0010))   => write!(f, "┎"),
       Literal::RD(Feat::Wide(0b0110))   => write!(f, "┏"),
-      Literal::RD(Feat::Door(0b0100))   => write!(f, "╒"), 	 	 
+      Literal::RD(Feat::Door(0b0100))   => write!(f, "╒"),
       Literal::RD(Feat::Door(0b0010))   => write!(f, "╓"),
       Literal::RD(Feat::Door(0b0110))   => write!(f, "╔"),
       Literal::DL(Feat::None)           => write!(f, "┐"),
-      Literal::DL(Feat::Wide(0b0010))   => write!(f, "┒"), 	 	
+      Literal::DL(Feat::Wide(0b0010))   => write!(f, "┒"),
       Literal::DL(Feat::Wide(0b0001))   => write!(f, "┑"),
       Literal::DL(Feat::Wide(0b0011))   => write!(f, "┓"),
-      Literal::DL(Feat::Door(0b0010))   => write!(f, "╖"), 	 	
+      Literal::DL(Feat::Door(0b0010))   => write!(f, "╖"),
       Literal::DL(Feat::Door(0b0001))   => write!(f, "╕"),
       Literal::DL(Feat::Door(0b0011))   => write!(f, "╗"),
       Literal::UL(Feat::None)           => write!(f, "┘"),
-      Literal::UL(Feat::Wide(0b1000))   => write!(f, "┚"),  	 	
+      Literal::UL(Feat::Wide(0b1000))   => write!(f, "┚"),
       Literal::UL(Feat::Wide(0b0001))   => write!(f, "┙"),
       Literal::UL(Feat::Wide(0b1001))   => write!(f, "┛"),
-      Literal::UL(Feat::Door(0b1000))   => write!(f, "╜"),  	 	
+      Literal::UL(Feat::Door(0b1000))   => write!(f, "╜"),
       Literal::UL(Feat::Door(0b0001))   => write!(f, "╛"),
       Literal::UL(Feat::Door(0b1001))   => write!(f, "╝"),
       Literal::UD(Feat::None)           => write!(f, "│"),
@@ -138,7 +138,7 @@ impl Display for Literal {
       Literal::URDL(Feat::Door(0b1111)) => write!(f, "╬"),
       Literal::String(s)                => write!(f, "{}", s),
       Literal::Unknown                  |
-      _                                 => write!(f, "?") 
+      _                                 => write!(f, "?")
     }
   }
 }
@@ -196,7 +196,7 @@ impl Output {
   }
   fn print_chars(&mut self, chars: Vec<Char>) -> error::IOResult {
       queue!(self.stdout, cursor::SavePosition)?;
-      for Char { l, pos: (x,y), color } in chars { 
+      for Char { l, pos: (x,y), color } in chars {
         if let Some(c) = color {
           queue!(self.stdout, SetForegroundColor(c))?;
         }

@@ -53,12 +53,12 @@ impl State {
   pub fn new() -> duckdb::Result<(Self, SyncSender<ControlStatePayload>, Receiver<StateControlPayload>)> {
     let (control_state_send, control_state_recv) = mpsc::sync_channel(SYNC_BUFFER_SIZE);
     let (state_control_send, state_control_recv) = mpsc::channel();
-    Ok((Self { 
-      state_control_send, 
-      control_state_recv, 
+    Ok((Self {
+      state_control_send,
+      control_state_recv,
       level_path       : None,
       board_size       : (INITIAL_BOARD_SIZE_W, INITIAL_BOARD_SIZE_H),
-      cursor_pos       : (INITIAL_CURSOR_POS_X, INITIAL_CURSOR_POS_Y), 
+      cursor_pos       : (INITIAL_CURSOR_POS_X, INITIAL_CURSOR_POS_Y),
       selected_shape   : None,
       db               : Connection::open_in_memory()?
     }, control_state_send, state_control_recv))
@@ -80,34 +80,44 @@ impl State {
     create macro is_connectors(x) as x between 0 and 15;
 
     -- Map character `c` to the corresponding connector number
-    create macro char_to_connectors(c) as 
-      case c
-        when '█' then 0
-        when '╴' then 1
-        when '╷' then 2
-        when '┐' then 3
-        when '╶' then 4
-        when '─' then 5
-        when '┌' then 6
-        when '┬' then 7
-        when '╵' then 8
-        when '┘' then 9
-        when '│' then 10
-        when '┤' then 11
-        when '└' then 12
-        when '┴' then 13
-        when '├' then 14
-        when '┼' then 15
+    create macro char_to_connectors(c) as
+      case
+        when c in ('█','◊')                                                                     then 0
+        when c in ('╴','╸')                                                                     then 1
+        when c in ('╷','╻')                                                                     then 2
+        when c in ('┐','┒','┑','┓','╖','╕','╗')                                                 then 3
+        when c in ('╶','╺')                                                                     then 4
+        when c in ('─','╼','╾','━','═')                                                         then 5
+        when c in ('┌','┍','┎','┏','╒','╓','╔')                                                 then 6
+        when c in ('┬','┮','┰','┭','┲','┱','┯','┳','╥','╤','╦')                                 then 7
+        when c in ('╵','╹')                                                                     then 8
+        when c in ('┘','┚','┙','┛','╜','╛','╝')                                                 then 9
+        when c in ('│','╿','╽','┃','║')                                                         then 10
+        when c in ('┤','┦','┧','┥','┩','┨','┪','┫','╢','╡','╣')                                 then 11
+        when c in ('└','┖','┕','┗','╙','╘','╚')                                                 then 12
+        when c in ('┴','┸','┶','┵','┺','┷','┹','┻','╨','╧','╩')                                 then 13
+        when c in ('├','┞','┝','┟','┡','┢','┠','┣','╞','╟','╠')                                 then 14
+        when c in ('┼','╀','┾','╁','┽','╄','╂','╃','╆','┿','╃','╊','╇','╉','╈','╋','╫','╪','╬') then 15
       end;
 
-    
+    -- Map character `c` to enum `type`
+    create macro char_to_type(c) as
+      case
+        when c = '◊'                                                                                                                    then 'Volatile'
+        when c in ('╸','╻','┒','┑','┓','╺','╼','╾','━','┍','┎','┏','┮','┰','┭','┲','┱','┯','┳','╹','┚',
+                   '┙','┛','╿','╽','┃','┦','┧','┥','┩','┨','┪','┫','┖','┕','┗','┸','┶','┵','┺','┷','┹',
+                   '┻','┞','┝','┟','┡','┢','┠','┣','╀','┾','╁','┽','╄','╂','╃','╆','┿','╃','╊','╇','╉','╈','╋')                         then 'Wide'
+        when c in ('╖','╕','╗','═','╒','╓','╔','╥','╤','╦','╜','╛','╝','║','╢','╡','╣','╙','╘','╚','╨','╧','╩','╞','╟','╠','╫','╪','╬') then 'Door'
+        else 'None'
+      end
+
     -- Returns true, if this and the other object at position (x,y) and (ox,oy) are vertically or horizontally adjacend and both connectors c and oc align
-    create macro "connects?"(c,x,y,oc,ox,oy) as 
+    create macro "connects?"(c,x,y,oc,ox,oy) as
          ((c & 8) = 8 and (oc & 2) = 2 and (x,y) = (ox  ,oy+1))  -- Selected Up    Connector + Potential Down  Connector
       or ((c & 4) = 4 and (oc & 1) = 1 and (x,y) = (ox-1,oy  ))  -- Selected Right Connector + Potential Left  Connector
       or ((c & 2) = 2 and (oc & 8) = 8 and (x,y) = (ox  ,oy-1))  -- Selected Down  Connector + Potential Up    Connector
       or ((c & 1) = 1 and (oc & 4) = 4 and (x,y) = (ox+1,oy  )); -- Selected Left  Connector + Potential Right Connector
-    
+
     create sequence object_seq_id;
     create sequence shape_seq_id;
     create table objects (
@@ -152,7 +162,7 @@ impl State {
 
     // Parse the level string
     self.db.execute(r"
-      insert into parsed_objects(connectors,x,y) 
+      insert into parsed_objects(connectors,x,y)
         select  char_to_connectors(chars[x]), x, y
         from    (select string_split_regex(?1,'(\r\n|[\r\n])') as rows),
         lateral (select generate_subscripts(rows,1)            as y),
@@ -177,7 +187,7 @@ impl State {
         (select nextval('shape_seq_id'), po.*
          from   parsed_objects as po
          where  po.connectors > 0
-         and    not exists (select 1 
+         and    not exists (select 1
                             from   objects as o
                             where  (o.connectors,o.x,o.y) = (po.connectors,po.x,po.y))
          limit 1)
@@ -188,10 +198,10 @@ impl State {
       )
       select fs.*
       from   form_shape as fs
-    "#, params![])? > 0 { 
+    "#, params![])? > 0 {
       self.db.execute(r#"
         delete from parsed_objects as po
-        where exists (select 1 
+        where exists (select 1
                       from   objects as o
                       where  (o.connectors,o.x,o.y) = (po.connectors,po.x,po.y))
       "#, params![])?;
@@ -201,14 +211,14 @@ impl State {
       Err(error::IOError::ParseLevelError)
     } else {
       self.db.execute("drop table parsed_objects", params![])?;
-      Ok(())      
+      Ok(())
     }
   }
 
   fn populate_database(&self) -> error::IOResult { if let Some(level_path) = self.level_path.clone() { self.load_level(fs::read_to_string(level_path)?)?; } Ok(()) }
 
   fn shutdown_database(self) -> error::IOResult {
-    if let Some((_,e)) = self.db.close().err() { 
+    if let Some((_,e)) = self.db.close().err() {
       Err(e)?;
     }
     Ok(())
@@ -219,20 +229,20 @@ impl State {
     if let Some(selected_shape) = self.selected_shape {
       self.state_control_send.send(StateControlPayload::PrintObjects(
         State::query_objects_via_statement(
-          self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o")?, 
+          self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o")?,
           params![],
-          |row| { 
-            let shape: i32 = row.get(1)?; 
-            Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), Some(if selected_shape == shape { Color::White } else { Color::DarkGrey }))) 
+          |row| {
+            let shape: i32 = row.get(1)?;
+            Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), Some(if selected_shape == shape { Color::White } else { Color::DarkGrey })))
           })?
       ))?;
     } else {
       self.state_control_send.send(StateControlPayload::PrintObjects(
         State::query_objects_via_statement(
-          self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o")?, 
+          self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o")?,
           params![],
-          |row| { 
-            Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), Some(Color::DarkGrey))) 
+          |row| {
+            Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), Some(Color::DarkGrey)))
           })?
       ))?;
     }
@@ -254,16 +264,16 @@ impl State {
       _                             => (None                                                                 , None                                                                 )
     } { Some((x,y)) } else { None }
   }
-  fn object_by_pos(&self, (x,y): (u16,u16)) -> duckdb::Result<Option<Object>> { 
+  fn object_by_pos(&self, (x,y): (u16,u16)) -> duckdb::Result<Option<Object>> {
     self.db.query_row(r#"
       select o.id, o.shape, o.connectors,
       from   objects as o
       where  (o.x,o.y) = (?1,?2)
       order by o.id
-    "#, params![x,y], |row| Ok(Object::new(row.get(0)?, row.get(1)?, row.get(2)?, (x,y)))).optional() 
+    "#, params![x,y], |row| Ok(Object::new(row.get(0)?, row.get(1)?, row.get(2)?, (x,y)))).optional()
   }
-  fn query_objects_via_statement<T,F>(mut statement: Statement, params: &[&dyn duckdb::ToSql], f :F) -> duckdb::Result<Vec<T>> 
-  where 
+  fn query_objects_via_statement<T,F>(mut statement: Statement, params: &[&dyn duckdb::ToSql], f :F) -> duckdb::Result<Vec<T>>
+  where
       F: FnMut(&duckdb::Row<'_>) -> duckdb::Result<T> {
     let mut err = None;
     let objects: Vec<T> = statement
@@ -274,14 +284,14 @@ impl State {
   }
   fn objects_by_shape_with_color(&self, shape: i32, color: Option<Color>) -> duckdb::Result<Vec<Object>> {
     State::query_objects_via_statement(
-      self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o where o.shape = ?1 order by o.id")?, 
-      params![shape], 
+      self.db.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o where o.shape = ?1 order by o.id")?,
+      params![shape],
       |row| Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), color))
     )
   }
   fn objects_by_shape_via_tx_with_color(tx: &duckdb::Transaction, shape: i32, color: Option<Color>) -> duckdb::Result<Vec<Object>> {
-    State::query_objects_via_statement(tx.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o where o.shape = ?1 order by o.id")?, 
-    params![shape], 
+    State::query_objects_via_statement(tx.prepare("select o.id, o.shape, o.connectors, o.x, o.y from objects as o where o.shape = ?1 order by o.id")?,
+    params![shape],
     |row| Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?,row.get(4)?), color)))
   }
   fn objects_by_shape_via_tx(tx: &duckdb::Transaction, shape: i32) -> duckdb::Result<Vec<Object>> {
@@ -296,9 +306,9 @@ impl State {
       let is_valid_move: bool = tx.query_row(r#"
         select bool_and(is_inbound(o.x+?1) and is_inbound(o.y+?2)
           and o.x+?1 < ?4 and o.y+?2 < ?5
-          and not exists (select 1 
-                          from   objects as _o 
-                          where  _o.shape <> ?3 
+          and not exists (select 1
+                          from   objects as _o
+                          where  _o.shape <> ?3
                           and    (_o.x,_o.y) = (o.x+?1,o.y+?2)))
         from   objects as o
         where  o.shape = ?3
@@ -306,7 +316,7 @@ impl State {
       if is_valid_move {
         // Insert current state into undo
         tx.execute_batch(r#"
-          insert into undo 
+          insert into undo
             select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0), o.*
             from   objects as o;
 
@@ -319,7 +329,7 @@ impl State {
         "#, params![UNDO_SIZE_IN_TURNS])?;
         // Move shape
         tx.execute(r#"
-          update objects 
+          update objects
             set   x = x+?1, y = y+?2
             where shape = ?3
         "#, params![Δx,Δy,shape])?;
@@ -329,9 +339,9 @@ impl State {
             update objects
               set   shape = ?1
               where shape <> ?1
-              and   shape in (select o.shape 
+              and   shape in (select o.shape
                               from   objects as o -- Potential merge candidates
-                              where  o.shape <> ?1 
+                              where  o.shape <> ?1
                               and    exists (select 1
                                              from   objects as _o -- Selected shape
                                              where  _o.shape = ?1
@@ -340,7 +350,7 @@ impl State {
           return Ok(Some((here_shape, State::objects_by_shape_via_tx_with_color(tx, shape, Some(Color::White))?)));
         }
       }
-    } 
+    }
     Ok(None)
   }
 
@@ -349,7 +359,7 @@ impl State {
     self.db.query_row(r#"
       select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0) as turn,
              not exists (select 1
-                         from   objects as o 
+                         from   objects as o
                          where  o.connectors > 0
                          and    (o.connectors & 8) = 8 and not exists (select 1 from objects as _o where (_o.connectors & 2) = 2 and (o.x,o.y) = (_o.x  ,_o.y+1))
                          or     (o.connectors & 4) = 4 and not exists (select 1 from objects as _o where (_o.connectors & 1) = 1 and (o.x,o.y) = (_o.x-1,_o.y  ))
@@ -364,14 +374,14 @@ impl State {
     self.state_control_send.send(
       StateControlPayload::TurnCounter(
         self.db.query_row("select max(o.y) from objects as o", params![], |row| row.get(0)).optional()?.map(|v_pos: u16| v_pos+1).unwrap_or(0),
-        turn_count, 
+        turn_count,
         is_complete
       ))?;
     Ok(())
   }
 
   /// Move cursor in a `direction` and notify the updated position to the controller, if the cursor moved to a new position
-  /// If the cursor has an object id selected, move the object with the object id as well, then notify the controller 
+  /// If the cursor has an object id selected, move the object with the object id as well, then notify the controller
   fn move_cursor(&mut self, direction: Direction) -> error::IOResult {
     let cursor_here@(here_x,here_y)    = self.cursor_position();
     if let Some(cursor_there@(there_x,there_y)) = State::move_cursor_to(&cursor_here, direction, self.board_size, self.selected_shape.is_some()) {
@@ -388,14 +398,14 @@ impl State {
               do_cursor_move = do_shape_move;
               if do_shape_move {
                 self.state_control_send.send(StateControlPayload::MoveShape(here_shape,there_shape))?; // Note: An object always moves before the cursor.
-              } 
+              }
             },
             Err(e) => {
-              log::error!("State: Tried moving a selected shape ({}), but it failed: {}", shape, e); 
+              log::error!("State: Tried moving a selected shape ({}), but it failed: {}", shape, e);
               return Err(e)
             },
           }
-        } 
+        }
         if do_cursor_move {
           self.cursor_pos = cursor_there;
           self.state_control_send.send(StateControlPayload::SetCursorPosition((self.cursor_pos.0, self.cursor_pos.1)))?;
@@ -418,22 +428,22 @@ impl State {
 
   /// If no shape is selected, select the one at the cursor position, if any
   /// If an shape is selected, deselect the shape
-  fn toggle_select_shape(&mut self) -> error::IOResult { 
-    if let Some(shape) = self.selected_shape { 
+  fn toggle_select_shape(&mut self) -> error::IOResult {
+    if let Some(shape) = self.selected_shape {
       self.state_control_send.send(StateControlPayload::PrintObjects(self.objects_by_shape_with_color(shape, Some(Color::DarkGrey))?))?;
-      self.selected_shape = None; 
-    } else { 
-      self.selected_shape = self.object_by_pos(self.cursor_position())?.filter(|obj| obj.connectors != 0).map(|obj| obj.shape); 
-    } 
+      self.selected_shape = None;
+    } else {
+      self.selected_shape = self.object_by_pos(self.cursor_position())?.filter(|obj| obj.connectors != 0).map(|obj| obj.shape);
+    }
     if let Some(shape) = self.selected_shape {
       self.state_control_send.send(StateControlPayload::PrintObjects(self.objects_by_shape_with_color(shape, Some(Color::White))?))?;
     }
-    Ok(()) 
+    Ok(())
   }
 
   fn set_board_size(&mut self, size@(w,h): (u16,u16)) -> error::IOResult {
     let old_board_size = self.board_size;
-    self.board_size = 
+    self.board_size =
     if let Some((min_w, min_h)) = self.db.query_row(r#"
       select max(o.x), max(o.y) from objects as o
       "#, params![], |row| Ok((row.get(0)?, row.get(1)?))).optional()? {
@@ -477,7 +487,7 @@ impl State {
       tx.execute_batch(r#"
         insert into undo
         select (select min(r.turn) from redo r)-1, o.* from objects as o;
-          
+
         insert or replace into objects(id,shape,connectors,x,y)
           select columns(* exclude (turn)) from redo as r where r.turn = (select min(r.turn) from redo r);
 
@@ -513,7 +523,7 @@ impl State {
         fs::remove_file(&save_file_path)?;
       }
       fs::rename(
-        Path::new(&format!("{}.zip", TEMP_SAVE_PATH)), 
+        Path::new(&format!("{}.zip", TEMP_SAVE_PATH)),
         Path::new(&save_file_path)
       )?;
     }
@@ -542,7 +552,7 @@ impl State {
     }
     Ok(())
   }
-  
+
   /// Starts the main loop
   pub fn maintain(mut self) -> error::IOResult {
     let mut now = time::Instant::now();
@@ -591,7 +601,7 @@ mod tests {
     #[test] fn move_cursor_left()       { assert_eq!(State::move_cursor_to(&(1,1), Direction::Left,      (u16::MAX,u16::MAX), false), Some((1-1,1+0))); }
     #[test] fn move_cursor_up_left()    { assert_eq!(State::move_cursor_to(&(1,1), Direction::UpLeft,    (u16::MAX,u16::MAX), false), Some((1-1,1-1))); }
 
-    #[test] 
+    #[test]
     // Cursor movement tests that try to go over the limits
     fn no_move_cases() {
       assert_eq!(State::move_cursor_to(&(u16::MAX-1,0         ), Direction::Up,        (u16::MAX, u16::MAX), false), None);
@@ -604,7 +614,7 @@ mod tests {
       assert_eq!(State::move_cursor_to(&(0         ,0         ), Direction::UpLeft,    (u16::MAX, u16::MAX), false), None);
     }
 
-    #[test] 
+    #[test]
     // Initialize and populate the database and see, if the expected number of objects are created
     fn initalize_and_populate_database() -> error::IOResult {
       let (state, _, _) = State::new()?;
@@ -625,19 +635,19 @@ mod tests {
     fn add_object(state: &State, shape: i32, conectors: i32, x: u16, y: u16) -> duckdb::Result<usize> { state.db.execute(r#"insert into objects(shape,connectors,x,y) select ?1,?2,?3,?4"#, params![shape,conectors,x,y]) }
 
     // Wrapper function to query an object by shape via transaction
-    fn object_by_id(state: &State, shape: i32) -> duckdb::Result<Option<Object>> { 
+    fn object_by_id(state: &State, shape: i32) -> duckdb::Result<Option<Object>> {
       state.db.query_row(r#"
-        select o.id, o.shape, o.connectors, o.x, o.y 
-        from   objects as o 
+        select o.id, o.shape, o.connectors, o.x, o.y
+        from   objects as o
         where  o.shape = ?1
       "#, params![shape], |row| Ok(Object::new(row.get(0)?, row.get(1)?, row.get(2)?, (row.get(3)?, row.get(4)?)))).optional() }
 
-    #[test] 
+    #[test]
     // Populate the database with one object {id: 1, shape: 1, pos: (2,3)} and test object_by_id and object_by_pos
     fn object_by_id_and_pos_database() -> error::IOResult {
       const SHAPE: i32      = 1;
       const CONNECTORS: i32 = 15;
-      const X: u16          = 2; 
+      const X: u16          = 2;
       const Y: u16          = 3;
       let (state, _, _) = State::new()?;
       state.init_database()?;
@@ -648,12 +658,12 @@ mod tests {
     }
 
     #[test]
-    // Move the cursor and select empty space until you read an object {id: 1, shape: 1, pos: (2,3)}, 
+    // Move the cursor and select empty space until you read an object {id: 1, shape: 1, pos: (2,3)},
     // select it, then move it down one and then deselect it and move the cursor some more
     fn move_cursor_and_objects() -> error::IOResult {
       const SHAPE: i32      = 1;
       const CONNECTORS: i32 = 15;
-      const X: u16          = 2; 
+      const X: u16          = 2;
       const Y: u16          = 3;
       let (mut state, _, dummy_recv) = State::new()?;
 
@@ -667,7 +677,7 @@ mod tests {
         }
         fn assert_received_shape_movement(dummy_recv: &Receiver<StateControlPayload>, expected_here: Object, expected_there: Object) {
           match dummy_recv.recv() {
-            Ok(StateControlPayload::MoveShape(here_shape,there_shape)) =>  { 
+            Ok(StateControlPayload::MoveShape(here_shape,there_shape)) =>  {
               assert_eq!(here_shape.len(), 1);
               assert_eq!(there_shape.len(), 1);
               assert_eq!((here_shape[0], there_shape[0]), (expected_here, expected_there))
@@ -678,7 +688,7 @@ mod tests {
         }
         fn assert_received_print_objects(dummy_recv: &Receiver<StateControlPayload>, expected_obj: Object) {
           match dummy_recv.recv() {
-            Ok(StateControlPayload::PrintObjects(shape)) =>  { 
+            Ok(StateControlPayload::PrintObjects(shape)) =>  {
               assert_eq!(shape.len(), 1);
               assert_eq!(shape[0], expected_obj)
             },
@@ -688,7 +698,7 @@ mod tests {
         }
         fn assert_received_turn_counter(dummy_recv: &Receiver<StateControlPayload>, expected_y_pos: u16, expected_turn: i32, expected_complete: bool) {
           match dummy_recv.recv() {
-            Ok(StateControlPayload::TurnCounter(y_pos,turn,complete)) =>  { 
+            Ok(StateControlPayload::TurnCounter(y_pos,turn,complete)) =>  {
               assert_eq!((y_pos,turn,complete),(expected_y_pos,expected_turn,expected_complete));
             },
             Ok(payload)                                            => panic!("Did not receive TurnCounter: {:?}", payload),
@@ -772,12 +782,12 @@ mod tests {
     }
 
     #[test]
-    /// ┌┐ 
+    /// ┌┐
     /// └┘
     fn simple_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, 1, 1)?; // ┌ 
+      add_object(&state, 1, 0b0110, 1, 1)?; // ┌
       add_object(&state, 1, 0b0011, 2, 1)?; // ┐
       add_object(&state, 1, 0b1001, 2, 2)?; // ┘
       add_object(&state, 1, 0b1100, 1, 2)?; // └
@@ -786,12 +796,12 @@ mod tests {
     }
 
     #[test]
-    /// ┐┌ 
+    /// ┐┌
     /// └┘
     fn simple_single_shape_incomplete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, 2, 1)?; // ┌ 
+      add_object(&state, 1, 0b0110, 2, 1)?; // ┌
       add_object(&state, 1, 0b0011, 1, 1)?; // ┐
       add_object(&state, 1, 0b1001, 2, 2)?; // ┘
       add_object(&state, 1, 0b1100, 1, 2)?; // └
@@ -800,12 +810,12 @@ mod tests {
     }
 
     #[test]
-    /// ┐ ┌ 
+    /// ┐ ┌
     /// └ ┘
     fn simple_two_shape_incomplete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 2, 0b0110, 3, 1)?; // ┌ 
+      add_object(&state, 2, 0b0110, 3, 1)?; // ┌
       add_object(&state, 1, 0b0011, 1, 1)?; // ┐
       add_object(&state, 2, 0b1001, 3, 2)?; // ┘
       add_object(&state, 1, 0b1100, 1, 2)?; // └
@@ -814,16 +824,16 @@ mod tests {
     }
 
     #[test]
-    /// ┌┐ ┌┐ 
+    /// ┌┐ ┌┐
     /// └┘ └┘
     fn simple_two_shape_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, 1, 1)?; // ┌ 
+      add_object(&state, 1, 0b0110, 1, 1)?; // ┌
       add_object(&state, 1, 0b0011, 2, 1)?; // ┐
       add_object(&state, 1, 0b1001, 2, 2)?; // ┘
       add_object(&state, 1, 0b1100, 1, 2)?; // └
-      add_object(&state, 2, 0b0110, 4, 1)?; // ┌ 
+      add_object(&state, 2, 0b0110, 4, 1)?; // ┌
       add_object(&state, 2, 0b0011, 5, 1)?; // ┐
       add_object(&state, 2, 0b1001, 5, 2)?; // ┘
       add_object(&state, 2, 0b1100, 4, 2)?; // └

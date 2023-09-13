@@ -100,7 +100,7 @@ impl State {
         when c =   '─'      then   5
         when c =   '╼'      then ( 4 << 4) + 1
         when c =   '╾'      then ( 1 << 4) + 4
-        when c in ('━''═')  then ( 5 << 4)
+        when c in ('━','═') then ( 5 << 4)
         when c =   '┌'      then   6
         when c in ('┍','╒') then ( 4 << 4) + 2
         when c in ('┎','╓') then ( 2 << 4) + 4

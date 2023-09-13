@@ -437,10 +437,9 @@ impl State {
           "#, params![shape])? > 0 {
             // If shape is completed and has any doors, open them.
             if tx.query_row(r#"
-              select exists (select "is complete?"(o.connectors,o.kind,o.x,o.y)
-                             from   objects as o
-                             where  o.shape = ?1
-                             and    o.kind = 'Door')
+              select coalesce(bool_and("is complete?"(o.connectors,o.kind,o.x,o.y)) and bool_or(o.kind = 'Door'), false)
+              from   objects as o
+              where  o.shape = ?1
             "#, params![shape], |row| row.get(0))? {
               // Open all doors
               tx.execute(r#"

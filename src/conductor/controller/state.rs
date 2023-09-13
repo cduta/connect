@@ -169,8 +169,8 @@ impl State {
         when c in ('╋','╬') then (15 << 4)
       end;
 
-    -- Map character `c` to enum `type`
-    create macro char_to_type(c) as
+    -- Map character `c` to enum `kind`
+    create macro char_to_kind(c) as
       case
         when c = '◊'                                                                                                                    then 'Volatile'
         when c in ('╸','╻','┒','┑','┓','╺','╼','╾','━','┍','┎','┏','┮','┰','┭','┲','┱','┯','┳','╹','┚',
@@ -190,30 +190,33 @@ impl State {
     create sequence object_seq_id;
     create sequence shape_seq_id;
     create table objects (
-      id         int primary key default nextval('object_seq_id'),
-      shape      int not null default nextval('shape_seq_id'),
-      connectors int not null check (is_connectors(connectors)),
-      x          int not null check (is_inbound(x)),
-      y          int not null check (is_inbound(y))
+      id         int  primary key default nextval('object_seq_id'),
+      shape      int  not null default nextval('shape_seq_id'),
+      connectors int  not null check (is_connectors(connectors)),
+      kind       kind not null,
+      x          int  not null check (is_inbound(x)),
+      y          int  not null check (is_inbound(y))
     );
 
     create table undo (
-      turn       int not null,
-      object_id  int not null,
-      shape      int not null,
-      connectors int not null check (is_connectors(connectors)),
-      x          int not null check (is_inbound(x)),
-      y          int not null check (is_inbound(y)),
+      turn       int  not null,
+      object_id  int  not null,
+      shape      int  not null,
+      connectors int  not null check (is_connectors(connectors)),
+      kind       kind not null,
+      x          int  not null check (is_inbound(x)),
+      y          int  not null check (is_inbound(y)),
       primary key(turn, object_id)
     );
 
     create table redo (
-      turn       int not null,
-      object_id  int not null,
-      shape      int not null,
-      connectors int not null check (is_connectors(connectors)),
-      x          int not null check (is_inbound(x)),
-      y          int not null check (is_inbound(y)),
+      turn       int  not null,
+      object_id  int  not null,
+      shape      int  not null,
+      connectors int  not null check (is_connectors(connectors)),
+      kind       kind not null,
+      x          int  not null check (is_inbound(x)),
+      y          int  not null check (is_inbound(y)),
       primary key(turn, object_id)
     )
     "#)
@@ -223,16 +226,17 @@ impl State {
     // Create temporary parsing table
     self.db.execute(r"
       create temporary table parsed_objects (
-        connectors int not null check (is_connectors(connectors)),
-        x          int not null check (is_inbound(x)),
-        y          int not null check (is_inbound(y))
+        connectors int  not null check (is_connectors(connectors)),
+        kind       kind not null,
+        x          int  not null check (is_inbound(x)),
+        y          int  not null check (is_inbound(y))
       );
     ", params![])?;
 
     // Parse the level string
     self.db.execute(r"
-      insert into parsed_objects(connectors,x,y)
-        select  char_to_connectors(chars[x]), x, y
+      insert into parsed_objects(connectors,kind,x,y)
+        select  char_to_connectors(chars[x]), char_to_kind(chars[x]), x, y
         from    (select string_split_regex(?1,'(\r\n|[\r\n])') as rows),
         lateral (select generate_subscripts(rows,1)            as y),
         lateral (select string_split_regex(rows[y],'')         as chars),
@@ -242,7 +246,7 @@ impl State {
 
     // Add walls
     self.db.execute_batch(r#"
-      insert into objects(connectors,x,y)
+      insert into objects(connectors,kind,x,y)
       select * from parsed_objects as po where po.connectors = 0;
 
       delete from parsed_objects
@@ -251,14 +255,14 @@ impl State {
 
     // Keep adding objects which together form shapes until no more shapes are added
     while self.db.execute(r#"
-      insert into objects(shape,connectors,x,y)
-      with recursive form_shape(shape, connectors,x,y) as (
+      insert into objects(shape,connectors,kind,x,y)
+      with recursive form_shape(shape,connectors,kind,x,y) as (
         (select nextval('shape_seq_id'), po.*
          from   parsed_objects as po
          where  po.connectors > 0
          and    not exists (select 1
                             from   objects as o
-                            where  (o.connectors,o.x,o.y) = (po.connectors,po.x,po.y))
+                            where  (o.connectors,o.kind,o.x,o.y) = (po.connectors,po.kind,po.x,po.y))
          limit 1)
           union
         select fs.shape, po.*
@@ -272,7 +276,7 @@ impl State {
         delete from parsed_objects as po
         where exists (select 1
                       from   objects as o
-                      where  (o.connectors,o.x,o.y) = (po.connectors,po.x,po.y))
+                      where  (o.connectors,o.kind,o.x,o.y) = (po.connectors,po.kind,po.x,po.y))
       "#, params![])?;
     }
 
@@ -534,7 +538,7 @@ impl State {
         insert into redo
           select (select max(u.turn) from undo u)+1, o.* from objects as o;
 
-        insert or replace into objects(id,shape,connectors,x,y)
+        insert or replace into objects(id,shape,connectors,kind,x,y)
           select columns(* exclude (turn)) from undo as u where u.turn = (select max(u.turn) from undo u);
 
         delete from undo
@@ -557,7 +561,7 @@ impl State {
         insert into undo
         select (select min(r.turn) from redo r)-1, o.* from objects as o;
 
-        insert or replace into objects(id,shape,connectors,x,y)
+        insert or replace into objects(id,shape,connectors,kind,x,y)
           select columns(* exclude (turn)) from redo as r where r.turn = (select min(r.turn) from redo r);
 
         delete from redo
@@ -701,7 +705,7 @@ mod tests {
     }
 
     // Helper function that adds an object to the initialized database of state
-    fn add_object(state: &State, shape: i32, conectors: i32, x: u16, y: u16) -> duckdb::Result<usize> { state.db.execute(r#"insert into objects(shape,connectors,x,y) select ?1,?2,?3,?4"#, params![shape,conectors,x,y]) }
+    fn add_object(state: &State, shape: i32, conectors: i32, kind: output::Kind, x: u16, y: u16) -> duckdb::Result<usize> { state.db.execute(r#"insert into objects(shape,connectors,kind,x,y) select ?1,?2,?3,?4,?5"#, params![shape,conectors,kind.to_string(),x,y]) }
 
     // Wrapper function to query an object by shape via transaction
     fn object_by_id(state: &State, shape: i32) -> duckdb::Result<Option<Object>> {
@@ -720,7 +724,7 @@ mod tests {
       const Y: u16          = 3;
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      assert_eq!(add_object(&state, SHAPE, CONNECTORS, X, Y)?, 1);
+      assert_eq!(add_object(&state, SHAPE, CONNECTORS, output::Kind::None, X, Y)?, 1);
       assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y))));
       assert_eq!(state.object_by_pos((X,Y))?, Some(Object::new(1, SHAPE, CONNECTORS, (X,Y))));
       Ok(())
@@ -800,7 +804,7 @@ mod tests {
       });
 
       state.init_database()?;
-      assert_eq!(add_object(&state, SHAPE, CONNECTORS, X, Y)?, 1);
+      assert_eq!(add_object(&state, SHAPE, CONNECTORS, output::Kind::None, X, Y)?, 1);
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X, INITIAL_CURSOR_POS_Y));
       assert_eq!(state.selected_shape, None);
       state.toggle_select_shape()?;
@@ -856,10 +860,10 @@ mod tests {
     fn simple_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, 1, 1)?; // ┌
-      add_object(&state, 1, 0b0011, 2, 1)?; // ┐
-      add_object(&state, 1, 0b1001, 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100, 1, 2)?; // └
+      add_object(&state, 1, 0b0110, output::Kind::None, 1, 1)?; // ┌
+      add_object(&state, 1, 0b0011, output::Kind::None, 2, 1)?; // ┐
+      add_object(&state, 1, 0b1001, output::Kind::None, 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100, output::Kind::None, 1, 2)?; // └
       assert_eq!(state.turn_state()?.1, true);
       Ok(())
     }
@@ -870,10 +874,10 @@ mod tests {
     fn simple_single_shape_incomplete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, 2, 1)?; // ┌
-      add_object(&state, 1, 0b0011, 1, 1)?; // ┐
-      add_object(&state, 1, 0b1001, 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100, 1, 2)?; // └
+      add_object(&state, 1, 0b0110, output::Kind::None, 2, 1)?; // ┌
+      add_object(&state, 1, 0b0011, output::Kind::None, 1, 1)?; // ┐
+      add_object(&state, 1, 0b1001, output::Kind::None, 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100, output::Kind::None, 1, 2)?; // └
       assert_eq!(state.turn_state()?.1, false);
       Ok(())
     }
@@ -884,10 +888,10 @@ mod tests {
     fn simple_two_shape_incomplete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 2, 0b0110, 3, 1)?; // ┌
-      add_object(&state, 1, 0b0011, 1, 1)?; // ┐
-      add_object(&state, 2, 0b1001, 3, 2)?; // ┘
-      add_object(&state, 1, 0b1100, 1, 2)?; // └
+      add_object(&state, 2, 0b0110, output::Kind::None, 3, 1)?; // ┌
+      add_object(&state, 1, 0b0011, output::Kind::None, 1, 1)?; // ┐
+      add_object(&state, 2, 0b1001, output::Kind::None, 3, 2)?; // ┘
+      add_object(&state, 1, 0b1100, output::Kind::None, 1, 2)?; // └
       assert_eq!(state.turn_state()?.1, false);
       Ok(())
     }
@@ -898,14 +902,14 @@ mod tests {
     fn simple_two_shape_complete() -> error::IOResult {
       let (state, _, _) = State::new()?;
       state.init_database()?;
-      add_object(&state, 1, 0b0110, 1, 1)?; // ┌
-      add_object(&state, 1, 0b0011, 2, 1)?; // ┐
-      add_object(&state, 1, 0b1001, 2, 2)?; // ┘
-      add_object(&state, 1, 0b1100, 1, 2)?; // └
-      add_object(&state, 2, 0b0110, 4, 1)?; // ┌
-      add_object(&state, 2, 0b0011, 5, 1)?; // ┐
-      add_object(&state, 2, 0b1001, 5, 2)?; // ┘
-      add_object(&state, 2, 0b1100, 4, 2)?; // └
+      add_object(&state, 1, 0b0110, output::Kind::None, 1, 1)?; // ┌
+      add_object(&state, 1, 0b0011, output::Kind::None, 2, 1)?; // ┐
+      add_object(&state, 1, 0b1001, output::Kind::None, 2, 2)?; // ┘
+      add_object(&state, 1, 0b1100, output::Kind::None, 1, 2)?; // └
+      add_object(&state, 2, 0b0110, output::Kind::None, 4, 1)?; // ┌
+      add_object(&state, 2, 0b0011, output::Kind::None, 5, 1)?; // ┐
+      add_object(&state, 2, 0b1001, output::Kind::None, 5, 2)?; // ┘
+      add_object(&state, 2, 0b1100, output::Kind::None, 4, 2)?; // └
       assert_eq!(state.turn_state()?.1, true);
       Ok(())
     }

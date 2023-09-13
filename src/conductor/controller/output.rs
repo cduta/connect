@@ -17,6 +17,16 @@ const OUTPUT_RATE_IN_MSECS: u64 = 1;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind { None, Wide(i32), Door(i32)}
 
+impl ToString for Kind {
+  fn to_string(&self) -> String {
+    match self {
+      Kind::None    => "None".to_string(),
+      Kind::Wide(d) => format!("Wide({d})"),
+      Kind::Door(d) => format!("Door({d})")
+    }
+  }
+}
+
 #[allow(clippy::upper_case_acronyms,dead_code)]
 #[derive(PartialEq, Eq)]
 pub enum Literal { Unknown,Empty,Wall,Volatile,U(Kind),R(Kind),D(Kind),L(Kind),UR(Kind),RD(Kind),DL(Kind),UL(Kind),UD(Kind),RL(Kind),URD(Kind),RDL(Kind),UDL(Kind),URL(Kind),URDL(Kind),String(String) }

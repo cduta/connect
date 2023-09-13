@@ -16,27 +16,28 @@ const OUTPUT_RATE_IN_MSECS: u64 = 1;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { None, Wide, Door}
+pub enum Kind { None, Wide, Door, Removed }
 
 impl ToString for Kind {
   fn to_string(&self) -> String {
     match self {
-      Kind::None => "None".to_string(),
-      Kind::Wide => "Wide".to_string(),
-      Kind::Door => "Door".to_string()
+      Kind::None    => "None".to_string(),
+      Kind::Wide    => "Wide".to_string(),
+      Kind::Door    => "Door".to_string(),
+      Kind::Removed => "Removed".to_string(),
     }
   }
 }
 
 impl FromStr for Kind {
   type Err = String;
-
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
-      "None" => Ok(Kind::None),
-      "Wide" => Ok(Kind::Wide),
-      "Door" => Ok(Kind::Door),
-      _      => Err("Failed to parse string to type `Kind`".to_string())
+      "None"    => Ok(Kind::None),
+      "Wide"    => Ok(Kind::Wide),
+      "Door"    => Ok(Kind::Door),
+      "Removed" => Ok(Kind::Removed),
+      _         => Err("Failed to parse string to type `Kind`".to_string())
     }
   }
 }

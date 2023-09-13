@@ -89,7 +89,11 @@ impl Controller {
   ///
   #[inline]
   fn connectors_to_literal(connectors: i32, kind: output::Kind) -> output::Literal {
-    if connectors == 0 { output::Literal::Wall } else  { output::Literal::Object(connectors, kind) }
+    match (connectors, kind) {
+      (_         ,output::Kind::Removed) => { output::Literal::Empty },
+      (0         ,_                    ) => { output::Literal::Wall  },
+      (connectors,kind                 ) => { output::Literal::Object(connectors,kind) }
+    }
   }
 
   /// Determine the next exeuction state based on payloads sent by child processes

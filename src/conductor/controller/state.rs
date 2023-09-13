@@ -204,14 +204,14 @@ impl State {
 
     -- Returns true, if an object at (ox,oy) with connectors oc and and kind ok is part of a complete shape
     create macro "is complete?"(oc,ok,ox,oy) as
-         (oc & 128) = 128 and not exists (select 1 from objects as _o where (_o.connectors &  32) =  32 and ok = _o.kind and (ox,oy) = (_o.x  ,_o.y+1))
-      or (oc &  64) =  64 and not exists (select 1 from objects as _o where (_o.connectors &  16) =  16 and ok = _o.kind and (ox,oy) = (_o.x-1,_o.y  ))
-      or (oc &  32) =  32 and not exists (select 1 from objects as _o where (_o.connectors & 128) = 128 and ok = _o.kind and (ox,oy) = (_o.x  ,_o.y-1))
-      or (oc &  16) =  16 and not exists (select 1 from objects as _o where (_o.connectors &  64) =  64 and ok = _o.kind and (ox,oy) = (_o.x+1,_o.y  ))
-      or (oc &   8) =   8 and not exists (select 1 from objects as _o where (_o.connectors &   2) =   2                  and (ox,oy) = (_o.x  ,_o.y+1))
-      or (oc &   4) =   4 and not exists (select 1 from objects as _o where (_o.connectors &   1) =   1                  and (ox,oy) = (_o.x-1,_o.y  ))
-      or (oc &   2) =   2 and not exists (select 1 from objects as _o where (_o.connectors &   8) =   8                  and (ox,oy) = (_o.x  ,_o.y-1))
-      or (oc &   1) =   1 and not exists (select 1 from objects as _o where (_o.connectors &   4) =   4                  and (ox,oy) = (_o.x+1,_o.y  ));
+      not (   (oc & 128) = 128 and not exists (select 1 from objects as _o where (_o.connectors &  32) =  32 and ok = _o.kind and (ox,oy) = (_o.x  ,_o.y+1))
+           or (oc &  64) =  64 and not exists (select 1 from objects as _o where (_o.connectors &  16) =  16 and ok = _o.kind and (ox,oy) = (_o.x-1,_o.y  ))
+           or (oc &  32) =  32 and not exists (select 1 from objects as _o where (_o.connectors & 128) = 128 and ok = _o.kind and (ox,oy) = (_o.x  ,_o.y-1))
+           or (oc &  16) =  16 and not exists (select 1 from objects as _o where (_o.connectors &  64) =  64 and ok = _o.kind and (ox,oy) = (_o.x+1,_o.y  ))
+           or (oc &   8) =   8 and not exists (select 1 from objects as _o where (_o.connectors &   2) =   2                  and (ox,oy) = (_o.x  ,_o.y+1))
+           or (oc &   4) =   4 and not exists (select 1 from objects as _o where (_o.connectors &   1) =   1                  and (ox,oy) = (_o.x-1,_o.y  ))
+           or (oc &   2) =   2 and not exists (select 1 from objects as _o where (_o.connectors &   8) =   8                  and (ox,oy) = (_o.x  ,_o.y-1))
+           or (oc &   1) =   1 and not exists (select 1 from objects as _o where (_o.connectors &   4) =   4                  and (ox,oy) = (_o.x+1,_o.y  )));
 
     create table undo (
       turn       int  not null,
@@ -268,7 +268,7 @@ impl State {
       where connectors = 0;
     "#)?;
 
-    // Keep adding objects which together form shapes until no more shapes are added
+    // Keep forming objects into shapes until no more shapes are added
     while self.db.execute(r#"
       insert into objects(shape,connectors,kind,x,y)
       with recursive form_shape(shape,connectors,kind,x,y) as (
@@ -443,11 +443,21 @@ impl State {
               and    o.kind = 'Door'
               limit 1
             "#, params![shape], |row| row.get(0))? {
+              // Open all doors
               tx.execute(r#"
                 delete from objects
-                where  shape = ?1
-                and    o.kind = 'Door'
-                and    (o.connectors & 240) > 0
+                  where shape = ?1
+                  and   kind = 'Door'
+                  and   (connectors & 240) > 0
+                  and   (connectors &  15) = 0
+              "#, params![shape])?;
+              // Remove partial doors from objects
+              tx.execute(r#"
+                update objects
+                  set   connectors = connectors & 15,
+                        kind = 'None'
+                  where shape = ?1
+                  and   kind = 'Door'
               "#, params![shape])?;
             }
           }
@@ -462,10 +472,9 @@ impl State {
   fn turn_state(&self) -> Result<(i32,bool), duckdb::Error> {
     self.db.query_row(r#"
       select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0) as turn,
-             not exists (select 1
-                         from   objects as o
-                         where  o.connectors > 0
-                         and    "is complete?"(o.connectors,o.kind,o.x,o.y)) as is_complete
+             (select "is complete?"(o.connectors,o.kind,o.x,o.y) as is_complete
+              from   objects as o
+              where  o.connectors > 0)
     "#, params![], |row| Ok((row.get(0)?,row.get(1)?)))
   }
 
@@ -954,25 +963,25 @@ mod tests {
       add_object(&state, 1, 0b00001001, "None".to_string(), 2, 3)?; // ┘
       add_object(&state, 1, 0b00001100, "None".to_string(), 1, 3)?; // └
       add_object(&state, 1, 0b00001010, "None".to_string(), 1, 2)?; // |
-      add_object(&state, 1, 0b01001010, "Door".to_string(), 1, 2)?; // ╞
+      add_object(&state, 1, 0b01001010, "Door".to_string(), 2, 2)?; // ╞
 
-      add_object(&state, 2, 0b01010000, "Door".to_string(), 2, 1)?; // ═
+      add_object(&state, 2, 0b01010000, "Door".to_string(), 3, 1)?; // ═
 
-      add_object(&state, 3, 0b00000110, "None".to_string(), 3, 1)?; // ┌
-      add_object(&state, 3, 0b00000011, "None".to_string(), 4, 1)?; // ┐
-      add_object(&state, 3, 0b00001001, "None".to_string(), 4, 3)?; // ┘
-      add_object(&state, 3, 0b00001100, "None".to_string(), 3, 3)?; // └
-      add_object(&state, 3, 0b00001010, "None".to_string(), 4, 2)?; // |
-      add_object(&state, 3, 0b00011010, "Door".to_string(), 3, 2)?; // ╡
+      add_object(&state, 3, 0b00000110, "None".to_string(), 4, 1)?; // ┌
+      add_object(&state, 3, 0b00000011, "None".to_string(), 5, 1)?; // ┐
+      add_object(&state, 3, 0b00001001, "None".to_string(), 5, 3)?; // ┘
+      add_object(&state, 3, 0b00001100, "None".to_string(), 4, 3)?; // └
+      add_object(&state, 3, 0b00001010, "None".to_string(), 5, 2)?; // |
+      add_object(&state, 3, 0b00011010, "Door".to_string(), 4, 2)?; // ╡
 
       let mut db = state.db.try_clone()?;
       let tx     = db.transaction()?;
       State::move_shape(&tx, 2, (0,1), (10,10))?;
       tx.commit()?;
 
-      assert_eq!(state.object_by_pos((2,2))?, None); // Removed
-      assert_eq!(state.object_by_pos((1,2))?, Some(Object::new( 6, 1, 0b00001010, "None".to_string(), (1,2)))); // ╞ → |
-      assert_eq!(state.object_by_pos((3,2))?, Some(Object::new(13, 1, 0b00001010, "None".to_string(), (1,2)))); // ╡ → |
+      assert_eq!(state.object_by_pos((3,2))?, None); // Removed
+      assert_eq!(state.object_by_pos((2,2))?, Some(Object::new( 6, 2, 0b00001010, "None".to_string(), (2,2)))); // ╞ → |
+      assert_eq!(state.object_by_pos((4,2))?, Some(Object::new(13, 2, 0b00001010, "None".to_string(), (4,2)))); // ╡ → |
       assert_eq!(state.db.query_row("select count(distinct o.shape) from objects as o", params![], |row| row.get(0)), Ok(2));
       assert!(state.turn_state()?.1);
 

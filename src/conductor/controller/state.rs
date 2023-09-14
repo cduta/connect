@@ -629,13 +629,16 @@ impl State {
       let tx = db.transaction()?;
       tx.execute_batch(r#"
         insert into redo
-          select (select max(u.turn) from undo u)+1, o.* from objects as o;
+          select (select max(u.turn) from undo as u)+1, o.* from objects as o;
 
         insert or replace into objects(id,shape,connectors,kind,x,y)
-          select columns(* exclude (turn)) from undo as u where u.turn = (select max(u.turn) from undo u);
+          select columns(* exclude (turn)) from undo as u where u.turn = (select max(u.turn) from undo as u);
+
+        delete from objects
+          where id not in (select u.object_id from undo as u where u.turn = (select min(u.turn) from undo as u));
 
         delete from undo
-          where turn = (select max(u.turn) from undo u);
+          where turn = (select max(u.turn) from undo as u);
       "#)?;
       tx.commit()?;
       self.selected_shape = None;
@@ -646,19 +649,22 @@ impl State {
   }
 
   fn redo(&mut self) -> error::IOResult {
-    // If there are any turns to undo, undo it
+    // If there are any turns to redo, redo it
     if self.db.query_row("select exists (select * from redo as r)", params![], |row| row.get(0))? {
       let mut db = self.db.try_clone()?;
       let tx = db.transaction()?;
       tx.execute_batch(r#"
         insert into undo
-        select (select min(r.turn) from redo r)-1, o.* from objects as o;
+        select (select min(r.turn) from redo as r)-1, o.* from objects as o;
 
         insert or replace into objects(id,shape,connectors,kind,x,y)
-          select columns(* exclude (turn)) from redo as r where r.turn = (select min(r.turn) from redo r);
+          select columns(* exclude (turn)) from redo as r where r.turn = (select min(r.turn) from redo as r);
+
+        delete from objects
+          where id not in (select r.object_id from redo as r where r.turn = (select min(r.turn) from redo as r));
 
         delete from redo
-          where turn = (select min(r.turn) from redo r);
+          where turn = (select min(r.turn) from redo as r);
       "#)?;
       tx.commit()?;
       self.selected_shape = None;
@@ -1111,11 +1117,32 @@ mod tests {
       assert_eq!(state.db.query_row("select count(distinct o.shape) from objects as o", params![], |row| row.get(0)), Ok(2));
       assert!(state.turn_state()?.1);
 
+      let door_object = Some(Object::new_with_color(7, 1, 0b01010000, "Door".to_string(), (3,2), None));
+      fn query_object(state: &State, query: &str) -> duckdb::Result<Option<Object>> {
+        state.db.query_row(query,
+                           params![],
+                           |row| Ok(Object::new_with_color(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, (row.get(4)?, row.get(5)?), None))).optional()
+      }
+
+      fn query_from_undo(state: &State) -> duckdb::Result<Option<Object>> {
+        query_object(&state, "select u.object_id, u.shape, u.connectors, u.kind::text, u.x, u.y from undo as u where (u.x,u.y) = (3,2)")
+      }
+
+      fn query_from_redo(state: &State) -> duckdb::Result<Option<Object>> {
+        query_object(&state, "select r.object_id, r.shape, r.connectors, r.kind::text, r.x, r.y from redo as r where (r.x,r.y) = (3,2)")
+      }
+
+      assert_eq!(query_from_undo(&state)?, door_object);
       assert_eq!(state.object_by_pos((3,2))?, None);
+      assert_eq!(query_from_redo(&state)?, None);
       state.undo()?;
-      assert_eq!(state.object_by_pos((3,2))?, Some(Object::new_with_color(7, 1, 0b01010000, "Door".to_string(), (3,2), None)));
+      assert_eq!(query_from_undo(&state)?, None);
+      assert_eq!(state.object_by_pos((3,2))?, door_object);
+      assert_eq!(query_from_redo(&state)?, None);
       state.redo()?;
+      assert_eq!(query_from_undo(&state)?, door_object);
       assert_eq!(state.object_by_pos((3,2))?, None);
+      assert_eq!(query_from_redo(&state)?, None);
 
       wait_for_dummy_thread(dummy_thread);
       Ok(())

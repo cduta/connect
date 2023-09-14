@@ -7,7 +7,7 @@ use crate::common;
 
 use super::error;
 
-type MoveObjectResult = Result<Option<(Vec<Object>,Vec<Object>)>, error::IOError>;
+type MoveObjectResult = Result<Option<(Vec<Object>,Vec<Object>,Option<i32>)>, error::IOError>;
 
 const SYNC_BUFFER_SIZE     : usize = 0;
 const SENDING_RATE_IN_MSECS: u64   = 1;
@@ -387,7 +387,8 @@ impl State {
   }
   /// Move a `shape` by `(Δx,Δy)` in transaction `tx`
   #[allow(non_snake_case)]
-  fn move_shape(tx: &duckdb::Transaction, shape: i32, (Δx,Δy): (i32,i32), (w,h): (u16,u16)) -> MoveObjectResult {
+  fn move_shape(tx: &duckdb::Transaction, shape: i32, (here_x,here_y): (u16,u16), there@(there_x,there_y): (u16,u16), (w,h): (u16,u16)) -> MoveObjectResult {
+    let (Δx,Δy) = (i32::from(there_x)-i32::from(here_x),i32::from(there_y)-i32::from(here_y));
     let here_shape = State::objects_by_shape_via_tx(tx, shape)?;
     if !here_shape.is_empty() {
       // Collision detection
@@ -442,6 +443,9 @@ impl State {
               from   objects as o
               where  o.shape = ?1
             "#, params![shape], |row| row.get(0))? {
+              // Keep the completed shape positions
+              tx.execute("create temporary table completed_shape as select * from objects as o where o.shape = ?1", params![shape])?;
+
               // Open all doors
               tx.execute(r#"
                 delete from objects
@@ -480,9 +484,34 @@ impl State {
                   from   one_shape as os
                 )
               "#, params![shape, new_shape])? > 0 } { }
+              // Query all objects that have previously been `shape` and set
+              let mut selected_shape = Some(shape);
+              let there_shape =
+                State::query_objects_via_statement(
+                  tx.prepare(r#"
+                    select cs.id, o.shape, o.connectors, o.kind::text, cs.x, cs.y
+                    from   completed_shape as cs left join objects as o on (cs.x,cs.y) = (o.x,o.y)
+                    where  cs.shape = ?1;
+                  "#)?,
+                  params![shape],
+                  |row| {
+                    let id = row.get(0)?;
+                    let o_shape: Option<i32> = row.get(1)?;
+                    let pos = (row.get(4)?,row.get(5)?);
+                    if pos == there { selected_shape = o_shape }
+                    if let Some(shape) = o_shape {
+                      Ok(Object::new_with_color(id, shape, row.get(2)?, row.get(3)?, pos, Some(Color::DarkGrey)))
+                    } else {
+                      Ok(Object::new(id, 0, 0, "Removed".to_string(), pos))
+                    }
+                  }
+                )?;
+                // Clean up
+                tx.execute("drop table completed_shape", params![])?;
+              return Ok(Some((here_shape,there_shape,selected_shape)));
             }
           }
-          return Ok(Some((here_shape, State::objects_by_shape_via_tx_with_color(tx, shape, Some(Color::White))?)));
+          return Ok(Some((here_shape, State::objects_by_shape_via_tx_with_color(tx, shape, Some(Color::White))?, Some(shape))));
         }
       }
     }
@@ -514,19 +543,21 @@ impl State {
   /// Move cursor in a `direction` and notify the updated position to the controller, if the cursor moved to a new position
   /// If the cursor has an object id selected, move the object with the object id as well, then notify the controller
   fn move_cursor(&mut self, direction: Direction) -> error::IOResult {
-    let cursor_here@(here_x,here_y)    = self.cursor_position();
-    if let Some(cursor_there@(there_x,there_y)) = State::move_cursor_to(&cursor_here, direction, self.board_size, self.selected_shape.is_some()) {
+    let cursor_here = self.cursor_position();
+    if let Some(cursor_there) = State::move_cursor_to(&cursor_here, direction, self.board_size, self.selected_shape.is_some()) {
       let mut do_cursor_move = cursor_here != cursor_there;
       let mut do_shape_move  = false;
+      let mut selected_shape = self.selected_shape;
       let mut db             = self.db.try_clone()?;
       let tx                 = db.transaction()?;
       if do_cursor_move {
-        if let Some(shape) = self.selected_shape {
-          match State::move_shape(&tx, shape, (i32::from(there_x)-i32::from(here_x),i32::from(there_y)-i32::from(here_y)), self.board_size) {
-            Ok(None)                            => { do_cursor_move = false },
-            Ok(Some((here_shape, there_shape))) => {
+        if let Some(shape) = selected_shape {
+          match State::move_shape(&tx, shape, cursor_here, cursor_there, self.board_size) {
+            Ok(None)                                                => { do_cursor_move = false },
+            Ok(Some((here_shape, there_shape, new_selected_shape))) => {
               do_shape_move  = here_shape.len() != there_shape.len() || here_shape.iter().enumerate().any(|(i,here)| here.pos != there_shape[i].pos);
               do_cursor_move = do_shape_move;
+              selected_shape = new_selected_shape;
               if do_shape_move {
                 self.state_control_send.send(StateControlPayload::MoveShape(here_shape,there_shape))?; // Note: An object always moves before the cursor.
               }
@@ -540,6 +571,12 @@ impl State {
         if do_cursor_move {
           self.cursor_pos = cursor_there;
           self.state_control_send.send(StateControlPayload::SetCursorPosition((self.cursor_pos.0, self.cursor_pos.1)))?;
+          if self.selected_shape != selected_shape {
+            self.selected_shape = selected_shape;
+            if let Some(shape) = self.selected_shape {
+              self.state_control_send.send(StateControlPayload::PrintObjects(self.objects_by_shape_with_color(shape, Some(Color::White))?))?;
+            }
+          }
         }
       }
       tx.commit()?;
@@ -1000,12 +1037,12 @@ mod tests {
 
       let mut db = state.db.try_clone()?;
       let tx     = db.transaction()?;
-      State::move_shape(&tx, 2, (0,1), (10,10))?;
+      assert_eq!(State::move_shape(&tx, 2, (3,1), (3,2), (10,10))?.expect("Shape returned `None`, where `Some` was expeced").1.len(), 13);
       tx.commit()?;
 
       assert_eq!(state.object_by_pos((3,2))?, None); // Removed
-      assert_eq!(state.object_by_pos((2,2))?, Some(Object::new( 6,shape+1, 0b00001010, "None".to_string(), (2,2)))); // ╞ → |
-      assert_eq!(state.object_by_pos((4,2))?, Some(Object::new(13,shape+2, 0b00001010, "None".to_string(), (4,2)))); // ╡ → |
+      assert_eq!(state.object_by_pos((2,2))?, Some(Object::new( 6, shape+1, 0b00001010, "None".to_string(), (2,2)))); // ╞ → |
+      assert_eq!(state.object_by_pos((4,2))?, Some(Object::new(13, shape+2, 0b00001010, "None".to_string(), (4,2)))); // ╡ → |
       assert_eq!(state.db.query_row("select count(distinct o.shape) from objects as o", params![], |row| row.get(0)), Ok(2));
       assert!(state.turn_state()?.1);
 

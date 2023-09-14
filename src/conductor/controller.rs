@@ -20,7 +20,12 @@ use crate::common;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args { #[arg(short, long)] level_path: String }
+struct Args {
+  // Path to `.lvl` file
+  #[arg(short = 'l', long)] level: String,
+  // undo size
+  #[arg(short = 'u', long, default_value = "250")] undo: usize
+}
 
 #[derive(PartialEq, Eq)]
 enum ExecutionState { Run, Restart, Error, Quit }
@@ -44,7 +49,7 @@ struct Controller {
 impl Controller {
   fn new(args: &Args) -> Result<Self,error::IOError> {
     let (    input , control_input_send , input_control_recv ) = Input::new();
-    let (    state , control_state_send , state_control_recv ) = State::new_with_level_path(args.level_path.clone())?;
+    let (    state , control_state_send , state_control_recv ) = State::new_with_args(args.level.clone(), args.undo)?;
     let (mut output, control_output_send, output_control_recv) = Output::new()?;
     Ok(Self {
       control_input_send, control_output_send, control_state_send,

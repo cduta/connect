@@ -15,7 +15,7 @@ const INITIAL_CURSOR_POS_X : u16   = 0;
 const INITIAL_CURSOR_POS_Y : u16   = 0;
 const INITIAL_BOARD_SIZE_W : u16   = u16::MAX;
 const INITIAL_BOARD_SIZE_H : u16   = u16::MAX;
-const UNDO_SIZE_IN_TURNS   : usize = 100;
+const UNDO_SIZE_IN_TURNS   : usize = 250;
 const TEMP_SAVE_PATH       : &str  = "temp-save";
 const SAVE_FILE_PATH       : &str  = "connect";
 
@@ -44,6 +44,7 @@ pub struct State {
   state_control_send: Sender<StateControlPayload>,
   control_state_recv: Receiver<ControlStatePayload>,
   level_path        : Option<String>,
+  undo_size         : usize,
   board_size        : (u16,u16),
   cursor_pos        : (u16,u16),
   selected_shape    : Option<i32>,
@@ -58,15 +59,17 @@ impl State {
       state_control_send,
       control_state_recv,
       level_path       : None,
+      undo_size        : UNDO_SIZE_IN_TURNS,
       board_size       : (INITIAL_BOARD_SIZE_W, INITIAL_BOARD_SIZE_H),
       cursor_pos       : (INITIAL_CURSOR_POS_X, INITIAL_CURSOR_POS_Y),
       selected_shape   : None,
       db               : Connection::open_in_memory()?
     }, control_state_send, state_control_recv))
   }
-  pub fn new_with_level_path(level_path: String) -> duckdb::Result<(Self, SyncSender<ControlStatePayload>, Receiver<StateControlPayload>)> {
+  pub fn new_with_args(level_path: String, undo_size: usize) -> duckdb::Result<(Self, SyncSender<ControlStatePayload>, Receiver<StateControlPayload>)> {
     let (mut state, control_state_recv, state_control_send) = State::new()?;
     state.level_path = Some(level_path);
+    state.undo_size  = undo_size;
     Ok((state, control_state_recv, state_control_send))
   }
   #[inline]
@@ -387,7 +390,12 @@ impl State {
   }
   /// Move a `shape` by `(Δx,Δy)` in transaction `tx`
   #[allow(non_snake_case)]
-  fn move_shape(tx: &duckdb::Transaction, shape: i32, (here_x,here_y): (u16,u16), there@(there_x,there_y): (u16,u16), (w,h): (u16,u16)) -> MoveObjectResult {
+  fn move_shape(tx                     : &duckdb::Transaction,
+                shape                  : i32,
+                (here_x,here_y)        : (u16,u16),
+                there@(there_x,there_y): (u16,u16),
+                (w,h)                  : (u16,u16),
+                undo_size              : usize) -> MoveObjectResult {
     let (Δx,Δy) = (i32::from(there_x)-i32::from(here_x),i32::from(there_y)-i32::from(here_y));
     let here_shape = State::objects_by_shape_via_tx(tx, shape)?;
     if !here_shape.is_empty() {
@@ -411,11 +419,11 @@ impl State {
 
           delete from redo;
         "#)?;
-        // Truncate all turns older than UNDO_SIZE_IN_TURNS
+        // Truncate all turns older than undo_size (in turns)
         tx.execute(r#"
           delete from undo
           where  (select max(u.turn) from undo as u) - turn >= ?1
-        "#, params![UNDO_SIZE_IN_TURNS])?;
+        "#, params![undo_size])?;
         // Move shape
         tx.execute(r#"
           update objects
@@ -550,7 +558,7 @@ impl State {
       let tx                 = db.transaction()?;
       if do_cursor_move {
         if let Some(shape) = selected_shape {
-          match State::move_shape(&tx, shape, cursor_here, cursor_there, self.board_size) {
+          match State::move_shape(&tx, shape, cursor_here, cursor_there, self.board_size, self.undo_size) {
             Ok(None)                                                => { do_cursor_move = false },
             Ok(Some((here_shape, there_shape, new_selected_shape))) => {
               do_shape_move  = here_shape.len() != there_shape.len() || here_shape.iter().enumerate().any(|(i,here)| here.pos != there_shape[i].pos);
@@ -1051,7 +1059,7 @@ mod tests {
 
       let mut db = state.db.try_clone()?;
       let tx     = db.transaction()?;
-      let (here,there,selected_object) = State::move_shape(&tx, 2, (3,1), (3,2), (10,10))?.expect("Shape returned `None`, where `Some` was expeced");
+      let (here,there,selected_object) = State::move_shape(&tx, 2, (3,1), (3,2), (10,10), UNDO_SIZE_IN_TURNS)?.expect("Shape returned `None`, where `Some` was expeced");
       assert_eq!(here.len(), 1);
       assert_eq!(there.len(), 13);
       assert_eq!(selected_object, None);
@@ -1105,7 +1113,7 @@ mod tests {
 
       let mut db = state.db.try_clone()?;
       let tx     = db.transaction()?;
-      let (here,there,selected_object) = State::move_shape(&tx, 2, (4,2), (4,1), (10,10))?.expect("Shape returned `None`, where `Some` was expeced");
+      let (here,there,selected_object) = State::move_shape(&tx, 2, (4,2), (4,1), (10,10), UNDO_SIZE_IN_TURNS)?.expect("Shape returned `None`, where `Some` was expeced");
       assert_eq!(here.len(), 6);
       assert_eq!(there.len(), 13);
       assert_eq!(selected_object, Some(4));

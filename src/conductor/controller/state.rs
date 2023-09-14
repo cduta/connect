@@ -401,11 +401,12 @@ impl State {
       // Collision detection
       let is_valid_move: bool = tx.query_row(r#"
         select bool_and(is_inbound(o.x+?1) and is_inbound(o.y+?2)
-          and o.x+?1 < ?4 and o.y+?2 < ?5
-          and not exists (select 1
-                          from   objects as _o
-                          where  _o.shape <> ?3
-                          and    (_o.x,_o.y) = (o.x+?1,o.y+?2)))
+                        and o.x+?1 < ?4 and o.y+?2 < ?5
+                        and not exists (select 1
+                                        from   objects as _o
+                                        where  _o.shape <> ?3
+                                        and    (_o.x,_o.y) = (o.x+?1,o.y+?2)))
+               or any_value(o.kind) = 'Volatile'
         from   objects as o
         where  o.shape = ?3
       "#, params![Δx,Δy,shape,w,h], |row| row.get(0))?;
@@ -429,7 +430,24 @@ impl State {
             set   x = x+?1, y = y+?2
             where shape = ?3
         "#, params![Δx,Δy,shape])?;
-        if tx.query_row(r#"select 1 from objects as o where o.shape = ?1 limit 1"#, params![shape], |row| row.get(0)).optional().is_ok_and(|o_row: Option<i32>| o_row.is_some()) {
+        if tx.query_row(r#"select exists (select 1 from objects as o where o.shape = ?1)"#, params![shape], |row| row.get(0))? {
+          // True, if a volatile is on top of another object
+          if tx.query_row(r#"
+            select exists (
+              select 1
+              from   objects as o, objects as _o
+              where  o.shape = ?1
+              and    o.kind = 'Volatile'
+              and    _o.shape <> ?1
+              and    (o.x,o.y) = (_o.x,_o.y))
+            "#, params![shape], |row| row.get(0))? {
+              // Remove all objects at position the position the Volatile is moved to
+              tx.execute(r#"
+                delete from objects
+                where  (x,y) = (?1,?2)
+              "#, params![there_x,there_y])?;
+              return Ok(Some((here_shape, vec![Object::new(0, 0, 0, "Removed".to_string(), there)], None)));
+            }
           // Merge shapes, if any are adjacent and then do things
           // If number of merged objects is larger than 0, check for doors
           if tx.execute(r#"
@@ -606,7 +624,7 @@ impl State {
       self.state_control_send.send(StateControlPayload::PrintObjects(self.objects_by_shape_with_color(shape, Some(Color::DarkGrey))?))?;
       self.selected_shape = None;
     } else {
-      self.selected_shape = self.object_by_pos(self.cursor_position())?.filter(|obj| obj.connectors != 0).map(|obj| obj.shape);
+      self.selected_shape = self.object_by_pos(self.cursor_position())?.filter(|obj| obj.connectors != 0 || obj.kind == "Volatile").map(|obj| obj.shape);
     }
     if let Some(shape) = self.selected_shape {
       self.state_control_send.send(StateControlPayload::PrintObjects(self.objects_by_shape_with_color(shape, Some(Color::White))?))?;

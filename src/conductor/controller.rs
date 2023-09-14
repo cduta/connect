@@ -95,9 +95,10 @@ impl Controller {
   #[inline]
   fn connectors_to_literal(connectors: i32, kind: output::Kind) -> output::Literal {
     match (connectors, kind) {
-      (_         ,output::Kind::Removed) => { output::Literal::Empty },
-      (0         ,_                    ) => { output::Literal::Wall  },
-      (connectors,kind                 ) => { output::Literal::Object(connectors,kind) }
+      (_         ,output::Kind::Removed ) => { output::Literal::Empty },
+      (_         ,output::Kind::Volatile) => { output::Literal::Volatile },
+      (0         ,_                     ) => { output::Literal::Wall  },
+      (connectors,kind                  ) => { output::Literal::Object(connectors,kind) }
     }
   }
 

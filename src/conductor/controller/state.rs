@@ -569,15 +569,15 @@ impl State {
         if do_cursor_move {
           self.cursor_pos = cursor_there;
           self.state_control_send.send(StateControlPayload::SetCursorPosition((self.cursor_pos.0, self.cursor_pos.1)))?;
-          if self.selected_shape != selected_shape {
-            self.selected_shape = selected_shape;
-            if let Some(shape) = self.selected_shape {
-              self.state_control_send.send(StateControlPayload::PrintObjects(self.objects_by_shape_with_color(shape, Some(Color::White))?))?;
-            }
-          }
         }
       }
       tx.commit()?;
+      if self.selected_shape != selected_shape {
+        self.selected_shape = selected_shape;
+        if let Some(shape) = self.selected_shape {
+          self.state_control_send.send(StateControlPayload::PrintObjects(self.objects_by_shape_with_color(shape, Some(Color::White))?))?;
+        }
+      }
       if do_shape_move { self.print_turn_counter()?; }
     }
     Ok(())

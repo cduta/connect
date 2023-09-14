@@ -1,3 +1,4 @@
+use core::panic;
 use std::{sync::mpsc::{Sender, SyncSender, Receiver, self}, time, cmp::max, fs, path::Path};
 use crossterm::style::Color;
 use duckdb::{Connection, params, OptionalExt, Statement};
@@ -305,7 +306,17 @@ impl State {
     }
   }
 
-  fn populate_database(&self) -> error::IOResult { if let Some(level_path) = self.level_path.clone() { self.load_level(fs::read_to_string(level_path)?)?; } Ok(()) }
+  fn populate_database(&self) -> error::IOResult {
+    if let Some(level_path) = self.level_path.clone() {
+      if !Path::new(level_path.as_str()).exists() {
+        let error_message = "Level `{level_path}` does not exists";
+        log::error!("{error_message}");
+        panic!("{error_message}");
+      }
+      self.load_level(fs::read_to_string(level_path)?)?;
+    }
+    Ok(())
+  }
 
   fn shutdown_database(self) -> error::IOResult {
     if let Some((_,e)) = self.db.close().err() {

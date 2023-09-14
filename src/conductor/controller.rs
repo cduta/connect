@@ -3,6 +3,7 @@ mod input;
 mod output;
 mod state;
 
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::mpsc::SendError;
 use std::time;
@@ -220,10 +221,18 @@ impl Controller {
 
 pub fn run() {
   let args = Args::parse();
+  if !Path::new(args.level.as_str()).exists() {
+    let error_message = format!("Level `{}` does not exist", args.level);
+    error!("{error_message}");
+    println!("{error_message}");
+    return;
+  }
   let mut controller = match Controller::new(&args) {
     Ok(controller) => controller,
     Err(e) => {
-      error!("Could not create the controller: {}", e);
+      let error_message = format!("Could not create the controller: {}", e);
+      error!("{error_message}");
+      println!("{error_message}");
       return;
     }
   };

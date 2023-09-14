@@ -751,7 +751,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use core::panic;
-    use std::thread;
+    use std::thread::{self, JoinHandle};
 
     use super::*;
 
@@ -807,6 +807,16 @@ mod tests {
         from   objects as o
         where  o.shape = ?1
       "#, params![shape], |row| Ok(Object::new(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, (row.get(4)?, row.get(5)?)))).optional() }
+
+    // Wait for dummy thread
+    fn wait_for_dummy_thread(dummy_thread: JoinHandle<()>) {
+      if !dummy_thread.is_finished() {
+        thread::sleep(time::Duration::from_secs(WAIT_FOR_DUMMY_THREAD_IN_SECS));
+        if !dummy_thread.is_finished() {
+          panic!("Thread did not finish after waiting for it for at least {} seconds", WAIT_FOR_DUMMY_THREAD_IN_SECS)
+        }
+      }
+    }
 
     #[test]
     // Populate the database with one object {id: 1, shape: 1, pos: (2,3)} and test object_by_id and object_by_pos
@@ -943,7 +953,7 @@ mod tests {
       assert_eq!(state.cursor_position(), (INITIAL_CURSOR_POS_X+3, INITIAL_CURSOR_POS_Y+4));
       assert_eq!(object_by_id(&state,1)?, Some(Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1))));
       assert_eq!(state.selected_shape, None);
-      if !dummy_thread.is_finished() { thread::sleep(time::Duration::from_secs(WAIT_FOR_DUMMY_THREAD_IN_SECS)); if !dummy_thread.is_finished() { panic!("Thread did not finish after waiting for it for at least {} seconds", WAIT_FOR_DUMMY_THREAD_IN_SECS) } }
+      wait_for_dummy_thread(dummy_thread);
       Ok(())
     }
 
@@ -1056,7 +1066,19 @@ mod tests {
     /// └┘ ╡│    └┘ └┘    └┘ └┘
     ///    └┘
     fn shapes_with_doors_keep_selection() -> error::IOResult {
-      let (state, _, _) = State::new()?;
+      let (mut state, _, dummy_recv) = State::new()?;
+
+      let dummy_thread = thread::spawn(move || {
+        let _ = dummy_recv.recv();
+        let _ = dummy_recv.recv();
+        let _ = dummy_recv.recv();
+        let _ = dummy_recv.recv();
+        let _ = dummy_recv.recv();
+        let _ = dummy_recv.recv();
+        let _ = dummy_recv.recv();
+        let _ = dummy_recv.recv();
+      });
+
       state.init_database()?;
       let mut shape: i32 = state.db.query_row("select nextval('shape_seq_id')", params![], |row| row.get(0))?;
       add_object(&state, shape, 0b00000110, "None".to_string(), 1, 1)?; // ┌
@@ -1089,6 +1111,13 @@ mod tests {
       assert_eq!(state.db.query_row("select count(distinct o.shape) from objects as o", params![], |row| row.get(0)), Ok(2));
       assert!(state.turn_state()?.1);
 
+      assert_eq!(state.object_by_pos((3,2))?, None);
+      state.undo()?;
+      assert_eq!(state.object_by_pos((3,2))?, Some(Object::new_with_color(7, 1, 0b01010000, "Door".to_string(), (3,2), None)));
+      state.redo()?;
+      assert_eq!(state.object_by_pos((3,2))?, None);
+
+      wait_for_dummy_thread(dummy_thread);
       Ok(())
     }
 }

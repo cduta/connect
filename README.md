@@ -1,7 +1,7 @@
 # Connect
 
 # Goal of the Game
-Connect all of the parts to form unbroken cycles
+Connect all so there are no open ends
 
 # Controls
 Movement       : Numpad (12346789) or Arrow Keys
@@ -17,4 +17,4 @@ q: Quit
 # Create Your Own Levels
 
 Use the following characters:
-█╵╶╷╴└┌┐┘│─├┬┤┴┼ 
+█╵╶╷╴└┌┐┘│─├┬┤┴┼

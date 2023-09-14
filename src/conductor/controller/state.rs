@@ -490,10 +490,8 @@ impl State {
                 State::query_objects_via_statement(
                   tx.prepare(r#"
                     select cs.id, o.shape, o.connectors, o.kind::text, cs.x, cs.y
-                    from   completed_shape as cs left join objects as o on (cs.x,cs.y) = (o.x,o.y)
-                    where  cs.shape = ?1;
-                  "#)?,
-                  params![shape],
+                    from   completed_shape as cs left join objects as o on (cs.x,cs.y) = (o.x,o.y);
+                  "#)?, params![],
                   |row| {
                     let id = row.get(0)?;
                     let o_shape: Option<i32> = row.get(1)?;
@@ -1037,7 +1035,52 @@ mod tests {
 
       let mut db = state.db.try_clone()?;
       let tx     = db.transaction()?;
-      assert_eq!(State::move_shape(&tx, 2, (3,1), (3,2), (10,10))?.expect("Shape returned `None`, where `Some` was expeced").1.len(), 13);
+      let (here,there,selected_object) = State::move_shape(&tx, 2, (3,1), (3,2), (10,10))?.expect("Shape returned `None`, where `Some` was expeced");
+      assert_eq!(here.len(), 1);
+      assert_eq!(there.len(), 13);
+      assert_eq!(selected_object, None);
+      tx.commit()?;
+
+      assert_eq!(state.object_by_pos((3,2))?, None); // Removed
+      assert_eq!(state.object_by_pos((2,2))?, Some(Object::new( 6, shape+1, 0b00001010, "None".to_string(), (2,2)))); // ╞ → |
+      assert_eq!(state.object_by_pos((4,2))?, Some(Object::new(13, shape+2, 0b00001010, "None".to_string(), (4,2)))); // ╡ → |
+      assert_eq!(state.db.query_row("select count(distinct o.shape) from objects as o", params![], |row| row.get(0)), Ok(2));
+      assert!(state.turn_state()?.1);
+
+      Ok(())
+    }
+
+    #[test]
+    /// ┌┐       ┌┐ ┌┐    ┌┐ ┌┐
+    /// │╞═┌┐ -> │╞═╡│ -> ││ ││
+    /// └┘ ╡│    └┘ └┘    └┘ └┘
+    ///    └┘
+    fn shapes_with_doors_keep_selection() -> error::IOResult {
+      let (state, _, _) = State::new()?;
+      state.init_database()?;
+      let mut shape: i32 = state.db.query_row("select nextval('shape_seq_id')", params![], |row| row.get(0))?;
+      add_object(&state, shape, 0b00000110, "None".to_string(), 1, 1)?; // ┌
+      add_object(&state, shape, 0b00000011, "None".to_string(), 2, 1)?; // ┐
+      add_object(&state, shape, 0b00001001, "None".to_string(), 2, 3)?; // ┘
+      add_object(&state, shape, 0b00001100, "None".to_string(), 1, 3)?; // └
+      add_object(&state, shape, 0b00001010, "None".to_string(), 1, 2)?; // |
+      add_object(&state, shape, 0b01001010, "Door".to_string(), 2, 2)?; // ╞
+      add_object(&state, shape, 0b01010000, "Door".to_string(), 3, 2)?; // ═
+
+      shape = state.db.query_row("select nextval('shape_seq_id')", params![], |row| row.get(0))?;
+      add_object(&state, shape, 0b00000110, "None".to_string(), 4, 2)?; // ┌
+      add_object(&state, shape, 0b00000011, "None".to_string(), 5, 2)?; // ┐
+      add_object(&state, shape, 0b00001001, "None".to_string(), 5, 4)?; // ┘
+      add_object(&state, shape, 0b00001100, "None".to_string(), 4, 4)?; // └
+      add_object(&state, shape, 0b00001010, "None".to_string(), 5, 3)?; // |
+      add_object(&state, shape, 0b00011010, "Door".to_string(), 4, 3)?; // ╡
+
+      let mut db = state.db.try_clone()?;
+      let tx     = db.transaction()?;
+      let (here,there,selected_object) = State::move_shape(&tx, 2, (4,2), (4,1), (10,10))?.expect("Shape returned `None`, where `Some` was expeced");
+      assert_eq!(here.len(), 6);
+      assert_eq!(there.len(), 13);
+      assert_eq!(selected_object, Some(4));
       tx.commit()?;
 
       assert_eq!(state.object_by_pos((3,2))?, None); // Removed

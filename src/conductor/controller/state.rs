@@ -74,16 +74,16 @@ impl State {
   }
   #[inline]
   pub fn cursor_position(&self) -> (u16,u16) { self.cursor_pos }
-  /// The database is initialized with a sequence `object_seq_id` and table `objects`
-  fn init_database(&self) -> duckdb::Result<()> {
-    self.db.execute_batch(r#"
+  fn init_database(&self) -> duckdb::Result<()> { self.init_database_with_sequence_starters(1,1) }
+  fn init_database_with_sequence_starters(&self, start_id: i32, start_shape: i32) -> duckdb::Result<()> {
+    self.db.execute_batch(format!(r#"
     -- Object type enum
     create type kind as enum ('None','Wide','Door','Volatile');
 
-    -- Is `x` ∈ { 0,…,65534 }?
+    -- Is `x` ∈ {{ 0,…,65534 }}?
     create macro is_inbound(x) as x between 0 and 65534;
 
-    -- Is `x` ∈ { 0,…,15 }?
+    -- Is `x` ∈ {{ 0,…,15 }}?
     create macro is_connectors(x) as x between 0 and 240;
 
     -- Map character `c` to the corresponding connector number
@@ -194,8 +194,8 @@ impl State {
               or ((c &   2) =   2 and (oc &   8) =   8 and (x,y) = (ox  ,oy-1))  -- Selected Down  Connector         + Potential Up    Connector
               or ((c &   1) =   1 and (oc &   4) =   4 and (x,y) = (ox+1,oy  )); -- Selected Left  Connector         + Potential Right Connector
 
-    create sequence object_seq_id;
-    create sequence shape_seq_id;
+    create sequence object_seq_id start {start_id};
+    create sequence shape_seq_id start {start_shape};
     create table objects (
       id         int  primary key default nextval('object_seq_id'),
       shape      int  not null default nextval('shape_seq_id'),
@@ -236,8 +236,7 @@ impl State {
       x          int  not null check (is_inbound(x)),
       y          int  not null check (is_inbound(y)),
       primary key(turn, object_id)
-    )
-    "#)
+    )"#).as_str())
   }
 
   fn load_level(&self, level_string: String) -> error::IOResult {
@@ -720,9 +719,17 @@ impl State {
       if let Err(e) = zip_extract::extract(fs::File::open(Path::new(save_file_path))?, Path::new("."), false) {
         log::error!("Load file at path {} failed: {}", &save_file_path_string, e);
       } else {
+        let level_string = fs::read_to_string(Path::new(format!("{}/load.sql", TEMP_SAVE_PATH).as_str()))?;
+        // Load the level
         self.db = Connection::open_in_memory()?;
         self.init_database()?;
-        self.db.execute_batch(fs::read_to_string(Path::new(format!("{}/load.sql", TEMP_SAVE_PATH).as_str()))?.as_str())?;
+        self.db.execute_batch(level_string.as_str())?;
+        // Get the current start_id and start_shape
+        let (start_id, start_shape) = self.db.query_row("select coalesce(max(o.id)+1,1), coalesce(max(o.shape),1) from objects as o", params![], |row| Ok((row.get(0)?, row.get(1)?))).unwrap_or((1,1));
+        // Reopen the database
+        self.db = Connection::open_in_memory()?;
+        self.init_database_with_sequence_starters(start_id, start_shape)?;
+        self.db.execute_batch(level_string.as_str())?;
       }
       if Path::new(TEMP_SAVE_PATH).exists() {
         fs::remove_dir_all(TEMP_SAVE_PATH)?;

@@ -21,11 +21,11 @@ pub enum Kind { None, Wide, Door, Volatile, Removed }
 impl ToString for Kind {
   fn to_string(&self) -> String {
     match self {
-      Kind::None     => "None".to_string(),
-      Kind::Wide     => "Wide".to_string(),
-      Kind::Door     => "Door".to_string(),
-      Kind::Volatile => "Volatile".to_string(),
-      Kind::Removed  => "Removed".to_string()
+      Self::None     => "None".to_string(),
+      Self::Wide     => "Wide".to_string(),
+      Self::Door     => "Door".to_string(),
+      Self::Volatile => "Volatile".to_string(),
+      Self::Removed  => "Removed".to_string()
     }
   }
 }
@@ -34,11 +34,11 @@ impl FromStr for Kind {
   type Err = String;
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
-      "None"     => Ok(Kind::None),
-      "Wide"     => Ok(Kind::Wide),
-      "Door"     => Ok(Kind::Door),
-      "Volatile" => Ok(Kind::Volatile),
-      "Removed"  => Ok(Kind::Removed),
+      "None"     => Ok(Self::None),
+      "Wide"     => Ok(Self::Wide),
+      "Door"     => Ok(Self::Door),
+      "Volatile" => Ok(Self::Volatile),
+      "Removed"  => Ok(Self::Removed),
       _          => Err("Failed to parse string to type `Kind`".to_string())
     }
   }

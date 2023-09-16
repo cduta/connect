@@ -163,8 +163,15 @@ impl Controller {
       },
       Ok(state::StateControlPayload::TurnCounter(y_pos, turn, complete)) => {
         send_handler(exec_state, self.control_output_send.send(
-          output::ControlOutputPayload::PrintChars(vec![
-            Char::new(Literal::String(format!("Turn: {}{}", turn, if complete {if cfg!(windows) {" OK"} else {" ✓"}} else {"   "})), (1,y_pos), if complete {Some(Color::Green)} else {Some(Color::DarkGrey)})]
+          output::ControlOutputPayload::PrintChars(vec![{
+                let (complete_text, complete_color) = match complete {
+                  state::Completeness::Complete          => (if cfg!(windows) {"  OK "} else {" ✓  "} , Color::Green),
+                  state::Completeness::PartiallyComplete => (if cfg!(windows) {" (OK)"} else {" (✓)"} , Color::Yellow),
+                  state::Completeness::Incomplete        => ("     "                                  , Color::DarkGrey)
+                };
+                Char::new(Literal::String(format!("Turn: {}{}", turn, complete_text)), (1,y_pos), Some(complete_color))
+              }
+            ]
           )
         ), "Error printing `level complete`")
       },

@@ -1,5 +1,5 @@
 use core::panic;
-use std::{sync::mpsc::{Sender, SyncSender, Receiver, self}, time, cmp::max, fs, path::Path};
+use std::{sync::mpsc::{Sender, SyncSender, Receiver, self}, time, cmp::max, fs, path::Path, str::FromStr};
 use crossterm::style::Color;
 use duckdb::{Connection, params, OptionalExt, Statement};
 use zip_archive::Archiver;
@@ -20,6 +20,31 @@ const UNDO_SIZE_IN_TURNS   : usize = 250;
 const TEMP_SAVE_PATH       : &str  = "temp-save";
 const SAVE_FILE_PATH       : &str  = "connect";
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Completeness { Complete, PartiallyComplete, Incomplete }
+
+impl ToString for Completeness {
+  fn to_string(&self) -> String {
+    match self {
+      Self::Complete          => "Complete".to_string(),
+      Self::PartiallyComplete => "PartiallyComplete".to_string(),
+      Self::Incomplete        => "Incomplete".to_string()
+    }
+  }
+}
+
+impl FromStr for Completeness {
+  type Err = String;
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "Complete"          => Ok(Self::Complete),
+      "PartiallyComplete" => Ok(Self::PartiallyComplete),
+      "Incomplete"        => Ok(Self::Incomplete),
+      _                   => Err("Failed to parse string to type `Completeness`".to_string())
+    }
+  }
+}
+
 #[derive(PartialEq, Eq)]
 pub enum Direction { Up, UpRight, Right, DownRight, Down, DownLeft, Left, UpLeft }
 
@@ -27,7 +52,7 @@ pub enum Direction { Up, UpRight, Right, DownRight, Down, DownLeft, Left, UpLeft
 pub enum ControlStatePayload { MoveCursor(Direction), SetCursorPosition((u16,u16)), Select, SetBoardSize((u16,u16)), Undo, Redo, Save, Load, Shutdown }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), TurnCounter(u16,i32,bool) }
+pub enum StateControlPayload { ClearTerminal, PrintObjects(Vec<Object>), SetCursorPosition((u16,u16)), MoveShape(Vec<Object>,Vec<Object>), ResizeTerminal((u16,u16)), TurnCounter(u16,i32,Completeness) }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Object { id: i32, shape: i32, color: Option<Color>, connectors: i32, kind: String, pos: (u16,u16) }
@@ -216,6 +241,8 @@ impl State {
            or (oc &   4) =   4 and not exists (select 1 from objects as _o where (_o.connectors &   1) =   1                  and (ox,oy) = (_o.x-1,_o.y  ))
            or (oc &   2) =   2 and not exists (select 1 from objects as _o where (_o.connectors &   8) =   8                  and (ox,oy) = (_o.x  ,_o.y-1))
            or (oc &   1) =   1 and not exists (select 1 from objects as _o where (_o.connectors &   4) =   4                  and (ox,oy) = (_o.x+1,_o.y  )));
+
+    create macro "is partially complete?"() as (select count(distinct o.shape) from objects as o where o.connectors > 0) = 1;
 
     create table undo (
       turn       int  not null,
@@ -553,23 +580,30 @@ impl State {
   }
 
   /// Return turn counter and true, if the level is complete
-  fn turn_state(&self) -> Result<(i32,bool), duckdb::Error> {
+  fn turn_state(&self) -> Result<(i32,Completeness), duckdb::Error> {
     self.db.query_row(r#"
       select coalesce((select max(u.turn)+1 from undo as u), (select min(r.turn)-1 from redo as r), 0) as turn,
-             (select bool_and("is complete?"(o.connectors,o.kind,o.x,o.y)) as is_complete
-              from   objects as o
-              where  o.connectors > 0)
-    "#, params![], |row| Ok((row.get(0)?,row.get(1)?)))
+             case
+               when (select bool_and("is complete?"(o.connectors,o.kind,o.x,o.y))
+                     from   objects as o
+                     where  o.connectors > 0)  then 'Complete'
+               when "is partially complete?"() then 'PartiallyComplete'
+               else 'Incomplete'
+             end as is_complete
+    "#, params![], |row| Ok((
+      row.get(0)?,
+      Completeness::from_str(row.get::<usize,String>(1)?.as_str()).unwrap_or(Completeness::Incomplete)
+    )))
   }
 
   /// Print the turn counter and an indicator, if the level is complete
   fn print_turn_counter(&self) -> error::IOResult {
-    let (turn_count,is_complete) = self.turn_state()?;
+    let (turn_count,completeness) = self.turn_state()?;
     self.state_control_send.send(
       StateControlPayload::TurnCounter(
         self.db.query_row("select max(o.y) from objects as o", params![], |row| row.get(0)).optional()?.map(|v_pos: u16| v_pos+1).unwrap_or(0),
         turn_count,
-        is_complete
+        completeness
       ))?;
     Ok(())
   }
@@ -922,7 +956,7 @@ mod tests {
             Err(e)                                                 => panic!("Failed to receive PrintObjects: {}", e)
           }
         }
-        fn assert_received_turn_counter(dummy_recv: &Receiver<StateControlPayload>, expected_y_pos: u16, expected_turn: i32, expected_complete: bool) {
+        fn assert_received_turn_counter(dummy_recv: &Receiver<StateControlPayload>, expected_y_pos: u16, expected_turn: i32, expected_complete: Completeness) {
           match dummy_recv.recv() {
             Ok(StateControlPayload::TurnCounter(y_pos,turn,complete)) =>  {
               assert_eq!((y_pos,turn,complete),(expected_y_pos,expected_turn,expected_complete));
@@ -939,19 +973,19 @@ mod tests {
           assert_received_print_objects(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y), Some(Color::White)));
          assert_received_shape_movement(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y), None), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
-           assert_received_turn_counter(&dummy_recv, 5, 1, false);
+           assert_received_turn_counter(&dummy_recv, 5, 1, Completeness::PartiallyComplete);
          assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X-1,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+1,INITIAL_CURSOR_POS_Y+4));
-           assert_received_turn_counter(&dummy_recv, 5, 2, false);
+           assert_received_turn_counter(&dummy_recv, 5, 2, Completeness::PartiallyComplete);
          assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X-1,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
-           assert_received_turn_counter(&dummy_recv, 5, 3, false);
+           assert_received_turn_counter(&dummy_recv, 5, 3, Completeness::PartiallyComplete);
          assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1)), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+3));
-           assert_received_turn_counter(&dummy_recv, 4, 4, false);
+           assert_received_turn_counter(&dummy_recv, 4, 4, Completeness::PartiallyComplete);
          assert_received_shape_movement(&dummy_recv, Object::new(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y)), Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1), Some(Color::White)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+2,INITIAL_CURSOR_POS_Y+4));
-           assert_received_turn_counter(&dummy_recv, 5, 5, false);
+           assert_received_turn_counter(&dummy_recv, 5, 5, Completeness::PartiallyComplete);
           assert_received_print_objects(&dummy_recv, Object::new_with_color(1, SHAPE, CONNECTORS, "None".to_string(), (X,Y+1), Some(Color::DarkGrey)));
         assert_received_cursor_position(&dummy_recv, (INITIAL_CURSOR_POS_X+3,INITIAL_CURSOR_POS_Y+4));
       });
@@ -1017,7 +1051,7 @@ mod tests {
       add_object(&state, 1, 0b0011, "None".to_string(), 2, 1)?; // ┐
       add_object(&state, 1, 0b1001, "None".to_string(), 2, 2)?; // ┘
       add_object(&state, 1, 0b1100, "None".to_string(), 1, 2)?; // └
-      assert!(state.turn_state()?.1);
+      assert_eq!(state.turn_state()?.1, Completeness::Complete);
       Ok(())
     }
 
@@ -1031,7 +1065,7 @@ mod tests {
       add_object(&state, 1, 0b0011, "None".to_string(), 1, 1)?; // ┐
       add_object(&state, 1, 0b1001, "None".to_string(), 2, 2)?; // ┘
       add_object(&state, 1, 0b1100, "None".to_string(), 1, 2)?; // └
-      assert!(!state.turn_state()?.1);
+      assert_eq!(state.turn_state()?.1,Completeness::PartiallyComplete);
       Ok(())
     }
 
@@ -1045,7 +1079,7 @@ mod tests {
       add_object(&state, 1, 0b0011, "None".to_string(), 1, 1)?; // ┐
       add_object(&state, 2, 0b1001, "None".to_string(), 3, 2)?; // ┘
       add_object(&state, 1, 0b1100, "None".to_string(), 1, 2)?; // └
-      assert!(!state.turn_state()?.1);
+      assert_eq!(state.turn_state()?.1,Completeness::Incomplete);
       Ok(())
     }
 
@@ -1063,7 +1097,7 @@ mod tests {
       add_object(&state, 2, 0b0011, "None".to_string(), 5, 1)?; // ┐
       add_object(&state, 2, 0b1001, "None".to_string(), 5, 2)?; // ┘
       add_object(&state, 2, 0b1100, "None".to_string(), 4, 2)?; // └
-      assert!(state.turn_state()?.1);
+      assert_eq!(state.turn_state()?.1, Completeness::Complete);
       Ok(())
     }
 
@@ -1105,7 +1139,7 @@ mod tests {
       assert_eq!(state.object_by_pos((2,2))?, Some(Object::new( 6, shape+1, 0b00001010, "None".to_string(), (2,2)))); // ╞ → |
       assert_eq!(state.object_by_pos((4,2))?, Some(Object::new(13, shape+2, 0b00001010, "None".to_string(), (4,2)))); // ╡ → |
       assert_eq!(state.db.query_row("select count(distinct o.shape) from objects as o", params![], |row| row.get(0)), Ok(2));
-      assert!(state.turn_state()?.1);
+      assert_eq!(state.turn_state()?.1, Completeness::Complete);
 
       Ok(())
     }
@@ -1159,7 +1193,7 @@ mod tests {
       assert_eq!(state.object_by_pos((2,2))?, Some(Object::new( 6, shape+1, 0b00001010, "None".to_string(), (2,2)))); // ╞ → |
       assert_eq!(state.object_by_pos((4,2))?, Some(Object::new(13, shape+2, 0b00001010, "None".to_string(), (4,2)))); // ╡ → |
       assert_eq!(state.db.query_row("select count(distinct o.shape) from objects as o", params![], |row| row.get(0)), Ok(2));
-      assert!(state.turn_state()?.1);
+      assert_eq!(state.turn_state()?.1, Completeness::Complete);
 
       let door_object = Some(Object::new_with_color(7, 1, 0b01010000, "Door".to_string(), (3,2), None));
       fn query_object(state: &State, query: &str) -> duckdb::Result<Option<Object>> {

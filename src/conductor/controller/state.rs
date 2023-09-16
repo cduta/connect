@@ -433,6 +433,61 @@ impl State {
                 there@(there_x,there_y): (u16,u16),
                 (w,h)                  : (u16,u16),
                 undo_size              : usize) -> MoveObjectResult {
+    fn change_shape<F>(mut f: F, tx: &duckdb::Transaction, shape: i32, here_shape: Vec<Object>, there: (u16, u16)) -> MoveObjectResult
+    where F: FnMut() -> duckdb::Result<()> {
+      // Keep the completed shape positions
+      tx.execute("create temporary table completed_shape as select * from objects as o where o.shape = ?1", params![shape])?;
+
+      // Apply changes
+      f()?;
+
+      // Update shapes
+      while {
+        let new_shape: i32 = tx.query_row("select nextval('shape_seq_id')", params![], |row| row.get(0))?;
+        tx.execute(r#"
+        update objects
+        set    shape = ?2
+        where  (x,y) in (
+          with recursive one_shape(shape,connectors,kind,x,y) as (
+            (select o.shape, o.connectors, o.kind, o.x, o.y
+             from   objects as o
+             where  shape = ?1
+             limit  1)
+              union
+            select o.shape, o.connectors, o.kind, o.x, o.y
+            from   one_shape as os, objects as o
+            where  os.shape = o.shape
+            and    "connects?"(os.connectors, os.kind, os.x, os.y, o.connectors, o.kind, o.x, o.y)
+          )
+          select (os.x,os.y)
+          from   one_shape as os
+        )
+      "#, params![shape, new_shape])? > 0 } { }
+      // Query all objects that have previously been `shape` and set
+      let mut selected_shape = Some(shape);
+      let there_shape =
+        State::query_objects_via_statement(
+          tx.prepare(r#"
+            select cs.id, o.shape, o.connectors, o.kind::text, cs.x, cs.y
+            from   completed_shape as cs left join objects as o on (cs.x,cs.y) = (o.x,o.y);
+          "#)?, params![],
+          |row| {
+            let id = row.get(0)?;
+            let o_shape: Option<i32> = row.get(1)?;
+            let pos = (row.get(4)?,row.get(5)?);
+            if pos == there { selected_shape = o_shape }
+            if let Some(shape) = o_shape {
+              Ok(Object::new_with_color(id, shape, row.get(2)?, row.get(3)?, pos, Some(Color::DarkGrey)))
+            } else {
+              Ok(Object::new(id, 0, 0, "Removed".to_string(), pos))
+            }
+          }
+        )?;
+        // Clean up
+        tx.execute("drop table completed_shape", params![])?;
+      return Ok(Some((here_shape,there_shape,selected_shape)))
+    }
+
     let (Δx,Δy) = (i32::from(there_x)-i32::from(here_x),i32::from(there_y)-i32::from(here_y));
     let here_shape = State::objects_by_shape_via_tx(tx, shape)?;
     if !here_shape.is_empty() {
@@ -483,58 +538,15 @@ impl State {
                 select o.shape from objects as o where (o.x,o.y) = (?1,?2) and o.shape <> ?3
               "#, params![there_x, there_y, shape], |row| row.get(0))?;
               if let Some(shape) = o_shape {
-                // Keep the completed shape positions
-                tx.execute("create temporary table completed_shape as select * from objects as o where o.shape = ?1", params![shape])?;
-                // Remove all objects at position the position the Volatile is moved to
-                tx.execute(r#"
-                  delete from objects
-                  where  (x,y) = (?1,?2)
-                "#, params![there_x,there_y])?;
-                // Update shapes
-                while {
-                  let new_shape: i32 = tx.query_row("select nextval('shape_seq_id')", params![], |row| row.get(0))?;
+
+                return change_shape(|| {
+                  // Remove all objects at position the position the Volatile is moved to
                   tx.execute(r#"
-                  update objects
-                  set    shape = ?2
-                  where  (x,y) in (
-                    with recursive one_shape(shape,connectors,kind,x,y) as (
-                      (select o.shape, o.connectors, o.kind, o.x, o.y
-                      from   objects as o
-                      where  shape = ?1
-                      limit  1)
-                        union
-                      select o.shape, o.connectors, o.kind, o.x, o.y
-                      from   one_shape as os, objects as o
-                      where  os.shape = o.shape
-                      and    "connects?"(os.connectors, os.kind, os.x, os.y, o.connectors, o.kind, o.x, o.y)
-                    )
-                    select (os.x,os.y)
-                    from   one_shape as os
-                  )
-                "#, params![shape, new_shape])? > 0 } { }
-                // Query all objects that have previously been `shape` and set
-                let mut selected_shape = Some(shape);
-                let there_shape =
-                  State::query_objects_via_statement(
-                    tx.prepare(r#"
-                      select cs.id, o.shape, o.connectors, o.kind::text, cs.x, cs.y
-                      from   completed_shape as cs left join objects as o on (cs.x,cs.y) = (o.x,o.y);
-                    "#)?, params![],
-                    |row| {
-                      let id = row.get(0)?;
-                      let o_shape: Option<i32> = row.get(1)?;
-                      let pos = (row.get(4)?,row.get(5)?);
-                      if pos == there { selected_shape = o_shape }
-                      if let Some(shape) = o_shape {
-                        Ok(Object::new_with_color(id, shape, row.get(2)?, row.get(3)?, pos, Some(Color::DarkGrey)))
-                      } else {
-                        Ok(Object::new(id, 0, 0, "Removed".to_string(), pos))
-                      }
-                    }
-                  )?;
-                  // Clean up
-                  tx.execute("drop table completed_shape", params![])?;
-                return Ok(Some((here_shape,there_shape,selected_shape)));
+                    delete from objects
+                    where  (x,y) = (?1,?2)
+                  "#, params![there_x,there_y])?;
+                  Ok(())
+                }, tx, shape, here_shape, there);
               } else {
                 return Ok(None);
               }
@@ -559,71 +571,25 @@ impl State {
               from   objects as o
               where  o.shape = ?1
             "#, params![shape], |row| row.get(0))? {
-              // Keep the completed shape positions
-              tx.execute("create temporary table completed_shape as select * from objects as o where o.shape = ?1", params![shape])?;
-
-              // Open all doors
-              tx.execute(r#"
-                delete from objects
-                  where shape = ?1
-                  and   kind = 'Door'
-                  and   (connectors & 240) > 0
-                  and   (connectors &  15) = 0
-              "#, params![shape])?;
-              // Remove partial doors from objects
-              tx.execute(r#"
-                update objects
-                  set   connectors = connectors & 15,
-                        kind = 'None'
-                  where shape = ?1
-                  and   kind = 'Door'
-              "#, params![shape])?;
-
-              // Update shapes
-              while {
-                let new_shape: i32 = tx.query_row("select nextval('shape_seq_id')", params![], |row| row.get(0))?;
+              return change_shape(|| {
+                // Open all doors
                 tx.execute(r#"
-                update objects
-                set    shape = ?2
-                where  (x,y) in (
-                  with recursive one_shape(shape,connectors,kind,x,y) as (
-                    (select o.shape, o.connectors, o.kind, o.x, o.y
-                     from   objects as o
-                     where  shape = ?1
-                     limit  1)
-                      union
-                    select o.shape, o.connectors, o.kind, o.x, o.y
-                    from   one_shape as os, objects as o
-                    where  os.shape = o.shape
-                    and    "connects?"(os.connectors, os.kind, os.x, os.y, o.connectors, o.kind, o.x, o.y)
-                  )
-                  select (os.x,os.y)
-                  from   one_shape as os
-                )
-              "#, params![shape, new_shape])? > 0 } { }
-              // Query all objects that have previously been `shape` and set
-              let mut selected_shape = Some(shape);
-              let there_shape =
-                State::query_objects_via_statement(
-                  tx.prepare(r#"
-                    select cs.id, o.shape, o.connectors, o.kind::text, cs.x, cs.y
-                    from   completed_shape as cs left join objects as o on (cs.x,cs.y) = (o.x,o.y);
-                  "#)?, params![],
-                  |row| {
-                    let id = row.get(0)?;
-                    let o_shape: Option<i32> = row.get(1)?;
-                    let pos = (row.get(4)?,row.get(5)?);
-                    if pos == there { selected_shape = o_shape }
-                    if let Some(shape) = o_shape {
-                      Ok(Object::new_with_color(id, shape, row.get(2)?, row.get(3)?, pos, Some(Color::DarkGrey)))
-                    } else {
-                      Ok(Object::new(id, 0, 0, "Removed".to_string(), pos))
-                    }
-                  }
-                )?;
-                // Clean up
-                tx.execute("drop table completed_shape", params![])?;
-              return Ok(Some((here_shape,there_shape,selected_shape)));
+                  delete from objects
+                    where shape = ?1
+                    and   kind = 'Door'
+                    and   (connectors & 240) > 0
+                    and   (connectors &  15) = 0
+                "#, params![shape])?;
+                // Remove partial doors from objects
+                tx.execute(r#"
+                  update objects
+                    set   connectors = connectors & 15,
+                          kind = 'None'
+                    where shape = ?1
+                    and   kind = 'Door'
+                "#, params![shape])?;
+                Ok(())
+              }, tx, shape, here_shape, there);
             }
           }
           return Ok(Some((here_shape, State::objects_by_shape_via_tx_with_color(tx, shape, Some(Color::White))?, Some(shape))));

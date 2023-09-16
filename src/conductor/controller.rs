@@ -141,7 +141,7 @@ impl Controller {
               obj.pos(),
               obj.color()))
             .collect()
-        )), "Error sending chars to output")
+        )), "Error printing objects to output")
       },
       Ok(state::StateControlPayload::SetCursorPosition((x,y))) => {
         send_handler(exec_state, self.control_output_send.send(output::ControlOutputPayload::SetCursorPosition((x,y))), "Error sending cursor position to output")
@@ -156,7 +156,7 @@ impl Controller {
                       obj.pos(),
                       obj.color())))
             .collect()
-        })), "Error moving object via output")
+        })), "Error sending shapes that move from here to there to output")
       },
       Ok(state::StateControlPayload::ResizeTerminal(size)) => {
         send_handler(exec_state, self.control_output_send.send(output::ControlOutputPayload::ResizeTerminal(size)), "Error resizing terminal")
@@ -210,11 +210,11 @@ impl Controller {
         }
       }
     }
-    // Clean shutdown the input thread, if possible
+    // Clean shutdown of input thread, if possible
     shutdown_thread(self.input_thread, self.control_input_send.send(input::ControlInputPayload::Shutdown));
-    // Clean shutdown the state thread, if possible
+    // Clean shutdown of state thread, if possible
     shutdown_thread(self.state_thread, self.control_state_send.send(state::ControlStatePayload::Shutdown));
-    // Clean shutdown the output thread, if possible
+    // Clean shutdown of output thread, if possible
     shutdown_thread(self.output_thread, self.control_output_send.send(output::ControlOutputPayload::Shutdown));
   }
 }

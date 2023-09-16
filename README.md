@@ -9,7 +9,7 @@ you can connect all into a single shape.
 
 # Controls
 Movement       : Numpad (12346789) or Arrow Keys
-Select/Deselect: Numpad 5 or Enter
+Select/Deselect: Numpad 5 or Enter or Space
 
 n: Restart
 u: Undo (up to 100 steps)

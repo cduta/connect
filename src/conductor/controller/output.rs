@@ -179,7 +179,6 @@ impl Display for Literal {
       Literal::Object(0b01011010,Kind::Door) => write!(f, "╪"),
       Literal::Object(0b11110000,Kind::Door) => write!(f, "╬"),
       Literal::String(s)                => write!(f, "{}", s),
-      Literal::Unknown                  |
       _                                 => write!(f, "?")
     }
   }

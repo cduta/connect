@@ -485,7 +485,7 @@ impl State {
         )?;
         // Clean up
         tx.execute("drop table completed_shape", params![])?;
-      return Ok(Some((here_shape,there_shape,selected_shape)))
+      Ok(Some((here_shape,there_shape,selected_shape)))
     }
 
     let (Δx,Δy) = (i32::from(there_x)-i32::from(here_x),i32::from(there_y)-i32::from(here_y));
